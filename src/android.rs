@@ -101,7 +101,9 @@ pub extern "C" fn android_main(app: AndroidApp) {
 /// needs no permissions. `directories` knows no Android paths, so the
 /// activity's own directories are used instead of [`AppDirs::discover`].
 fn android_dirs(app: &AndroidApp) -> AppDirs {
-    let files = app.internal_data_path().or_else(|| app.external_data_path());
+    let files = app
+        .internal_data_path()
+        .or_else(|| app.external_data_path());
     match files {
         Some(files) => {
             let cache = files

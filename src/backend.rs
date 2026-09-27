@@ -1650,7 +1650,10 @@ impl Worker {
                     tokio::spawn(async move {
                         // No file picker on Android yet: no cover chosen.
                         #[cfg(target_os = "android")]
-                        let result: Result<Option<crate::playlist_cover::Cover>, String> = Ok(None);
+                        let result: Result<
+                            Option<crate::playlist_cover::Cover>,
+                            String,
+                        > = Ok(None);
                         #[cfg(not(target_os = "android"))]
                         let result = match selected.await {
                             None => Ok(None),

@@ -61,6 +61,16 @@ jobs:
           cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
           [ "${CLIPPY_STATUS:-1}" != "0" ] && fault=1
           mbx test --locked --lib --no-default-features > /tmp/host-test.log 2>&1 || fault=1
+          git stash push -- Cargo.toml > /dev/null 2>&1
+          if cargo metadata --locked --no-deps --format-version 1 > /dev/null 2>&1; then
+            echo "lock was already fresh WITHOUT my Cargo.toml changes (unexpected)" > /tmp/stash-test.log
+          else
+            echo "lock was ALREADY STALE without my Cargo.toml changes (pre-existing)" > /tmp/stash-test.log
+          fi
+          git stash pop > /dev/null 2>&1
+          cp Cargo.lock /tmp/Cargo.lock.orig
+          cargo update -w > /tmp/update-w.log 2>&1 || fault=1
+          diff /tmp/Cargo.lock.orig Cargo.lock > /tmp/lock-diff.log 2>&1 || true
           [ "$fault" = "0" ] && exit 0
           {
             echo '## diagnostics (temporary debug step)'
@@ -72,12 +82,27 @@ jobs:
             echo
             echo '### android clippy (tail)'
             echo '```'
-            tail -100 /tmp/clippy.log
+            tail -30 /tmp/clippy.log
             echo '```'
             echo
             echo '### desktop lib tests (tail)'
             echo '```'
-            tail -40 /tmp/host-test.log
+            tail -20 /tmp/host-test.log
+            echo '```'
+            echo
+            echo '### lock freshness without my Cargo.toml'
+            echo '```'
+            cat /tmp/stash-test.log
+            echo '```'
+            echo
+            echo '### cargo update -w'
+            echo '```'
+            tail -20 /tmp/update-w.log
+            echo '```'
+            echo
+            echo '### Cargo.lock delta (truncated at 150 lines)'
+            echo '```diff'
+            head -150 /tmp/lock-diff.log
             echo '```'
           } > /tmp/diag.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
