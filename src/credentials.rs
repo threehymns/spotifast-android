@@ -192,6 +192,10 @@ impl NativeStore {
     }
 
     fn entry_in(&mut self, service: &str, key: &str) -> Result<keyring_core::Entry, Error> {
+        // Android has no native credential-store provider wired yet, so the
+        // store stays `None` there and the lookup below reports `Unavailable`:
+        // the Spotify grant lives in memory only and is never remembered.
+        #[cfg(not(target_os = "android"))]
         if self.store.is_none() {
             #[cfg(target_os = "linux")]
             let store = zbus_secret_service_keyring_store::Store::new();

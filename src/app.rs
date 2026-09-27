@@ -2754,7 +2754,10 @@ impl App {
             .retain(|toast| toast.created.elapsed() < TOAST_LIFETIME);
         self.maybe_suggest_personal_app();
 
-        if self.settings.check_for_updates
+        // The Play Store (or the sideloaded APK's installer) owns updates on
+        // Android; the desktop updater only knows desktop releases.
+        if !cfg!(target_os = "android")
+            && self.settings.check_for_updates
             && !self.offline
             && self
                 .last_update_check
@@ -9437,6 +9440,11 @@ impl App {
     }
 
     fn check_for_updates(&mut self, manual: bool) {
+        // The store owns updates on Android; the desktop updater only knows
+        // desktop releases.
+        if cfg!(target_os = "android") {
+            return;
+        }
         if self.update_checking
             || (self.offline && self.update_source.is_github())
             || !matches!(

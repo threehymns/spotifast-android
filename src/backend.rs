@@ -579,6 +579,7 @@ pub enum Command {
     ChoosePlaylistCover {
         id: String,
         request: u64,
+        #[cfg(not(target_os = "android"))]
         selected:
             std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>,
     },
@@ -1022,15 +1023,22 @@ impl Backend {
         if self.offline {
             return;
         }
+        #[cfg(not(target_os = "android"))]
         let selected = rfd::AsyncFileDialog::new()
             .set_title("Choose playlist cover")
             .add_filter("JPEG or PNG image", &["jpg", "jpeg", "png"])
             .pick_file();
+        #[cfg(not(target_os = "android"))]
         self.send(Command::ChoosePlaylistCover {
             id,
             request,
             selected: Box::pin(selected),
         });
+        // No system file picker is wired on Android yet; still send the
+        // command so the dialog answers at once instead of waiting on a
+        // choice that can never come.
+        #[cfg(target_os = "android")]
+        self.send(Command::ChoosePlaylistCover { id, request });
     }
 
     pub fn api(&self, request: ApiRequest) {
@@ -1634,13 +1642,17 @@ impl Worker {
                 Command::ChoosePlaylistCover {
                     id,
                     request,
+                    #[cfg(not(target_os = "android"))]
                     selected,
                 } => {
                     let events = self.events.clone();
                     let waker = self.waker.clone();
                     tokio::spawn(async move {
-                        let selected = selected.await;
-                        let result = match selected {
+                        // No file picker on Android yet: no cover chosen.
+                        #[cfg(target_os = "android")]
+                        let result: Result<Option<crate::playlist_cover::Cover>, String> = Ok(None);
+                        #[cfg(not(target_os = "android"))]
+                        let result = match selected.await {
                             None => Ok(None),
                             Some(file) => tokio::task::spawn_blocking(move || {
                                 crate::playlist_cover::read(file.path()).map(Some)

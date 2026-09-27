@@ -13,6 +13,9 @@ categories = ["multimedia::audio"]
 [lib]
 name = "spotifast"
 path = "src/lib.rs"
+# The Android build (manifest.yaml) loads the app as a cdylib out of the APK;
+# desktop binaries keep linking the rlib.
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "spotifast"
@@ -143,10 +146,26 @@ pbkdf2 = "0.12"
 aes = "0.8"
 ctr = "0.9"
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # The desktop's media controls on Windows and macOS, so closing the window
-# keeps the music playing there too. Linux has mpris-server below.
+# keeps the music playing there too. Linux has mpris-server below, and
+# Android a stub (src/media_android.rs) until a MediaSession bridge exists.
 souvlaki = { version = "0.8", default-features = false }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# Native asynchronous file selection on macOS, Windows and Linux desktop
+# portals. Android has no file picker wired yet; the cover dialog answers
+# at once there (src/backend.rs).
+rfd = "0.17.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# eframe's NativeActivity backend through winit. Features merge with the
+# desktop set above; the x11/wayland backends compile but stay unused.
+eframe = { version = "0.36", features = ["android-native-activity"] }
+# AndroidApp feeds the event loop and locates the app's data directories.
+# The [patch] below swaps this for the same winit fork eframe uses.
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
+# Logcat needs no crate: src/android.rs writes to it with one FFI call.
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }

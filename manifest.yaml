@@ -1,0 +1,16 @@
+# xbuild packaging for the Android APK (.github/workflows/android.yml).
+# Everything unset here falls back to xbuild's defaults: version 0.11.0 from
+# Cargo.toml, SDK target/compile 33 with min 21, a NativeActivity launcher
+# pointing at this library, and non-debuggable release builds.
+
+android:
+  # Launcher icon, scaled to every density. The macOS .icns source without
+  # platform rounding.
+  icon: packaging/macos/icon-1024.png
+  manifest:
+    package: rocks.spotifast.Spotifast
+    uses_permission:
+      - {name: android.permission.INTERNET}
+      - {name: android.permission.ACCESS_NETWORK_STATE}
+    application:
+      label: Spotifast

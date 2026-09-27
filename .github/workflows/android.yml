@@ -1,0 +1,81 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # xbuild is unpublished (crates.io still carries the unrelated 0.2.0 from
+  # 2022), so CI installs it from git at this revision.
+  XBUILD_REV: e67b501cbe0e9ca5436c223aa7ec0fe5e27544d1
+
+jobs:
+  apk:
+    name: release APK (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Android target
+        run: rustup target add aarch64-linux-android
+      # After the toolchain, so the cache key follows the pinned rustc. See
+      # ci.yml for why each job sets its own generation.
+      - uses: jdx/mr-boxington-action@v1
+        with:
+          cache-generation: android-v1
+      # The fast signal: the same library xbuild compiles, before the slow
+      # release build below. MilkDrop stays off: its C++ build has no
+      # Android toolchain wiring.
+      - name: Clippy (aarch64-linux-android)
+        run: mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings
+      # Building xbuild takes minutes; the binary is cached by revision and
+      # the install skipped on a hit.
+      - name: Cache xbuild
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/x
+          key: xbuild-${{ env.XBUILD_REV }}
+      - name: Install xbuild
+        run: |
+          if ! command -v x >/dev/null; then
+            cargo install --git https://github.com/rust-mobile/xbuild --rev "$XBUILD_REV" xbuild
+          fi
+          x --version
+      # Without a signing key the APK carries xbuild's debug signature:
+      # installable, but not Play-uploadable. Set the ANDROID_SIGNING_PEM
+      # repository secret (a PEM-encoded RSA key and certificate) to sign
+      # release builds for distribution instead.
+      - name: Build release APK
+        run: |
+          args=(--platform android --arch arm64 --format apk --release --no-default-features)
+          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
+            echo "${{ secrets.ANDROID_SIGNING_PEM }}" > "$RUNNER_TEMP/signing.pem"
+            args+=(--pem "$RUNNER_TEMP/signing.pem")
+          fi
+          x build "${args[@]}"
+      - name: Inspect APK
+        run: |
+          apk=(target/x/release/android/*.apk)
+          unzip -l "${apk[0]}" | tee "$RUNNER_TEMP/apk-contents.txt"
+          grep -q 'lib/arm64-v8a/libspotifast\.so' "$RUNNER_TEMP/apk-contents.txt"
+          ls -la "${apk[0]}"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotifast-android-arm64
+          path: target/x/release/android/*.apk
+          if-no-files-found: error
