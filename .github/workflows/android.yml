@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  # TEMPORARY (debug): the diagnostics step comments failure output on the
-  # PR. Revert before merging.
+  # TEMPORARY (debug): write is for the lockfile refresh commit and the
+  # diagnostics comment. Revert to contents: read before merging.
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -40,6 +40,25 @@ jobs:
       - uses: jdx/mr-boxington-action@v1
         with:
           cache-generation: android-v1
+      # TEMPORARY (debug): the lockfile is missing 15 wgpu-tree packages
+      # (pre-existing staleness); regenerate it for this job and commit it
+      # to the branch. Delete the step before merging (keep Cargo.lock).
+      - name: Refresh lockfile (temporary)
+        if: github.event.pull_request.number
+        run: |
+          cp Cargo.lock /tmp/Cargo.lock.orig
+          cargo update -w > /tmp/update-w.log 2>&1
+          tail -5 /tmp/update-w.log
+          if git diff --quiet -- Cargo.lock; then
+            echo "lockfile already fresh"
+          else
+            cp Cargo.lock /tmp/Cargo.lock.new
+            git fetch origin "${{ github.head_ref }}:${{ github.head_ref }}" --depth 1
+            git checkout "${{ github.head_ref }}"
+            cp /tmp/Cargo.lock.new Cargo.lock
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -am "Regenerate Cargo.lock (add 15 missing wgpu-tree packages)"
+            git push origin "${{ github.head_ref }}"
+          fi
       # The fast signal: the same library xbuild compiles, before the slow
       # release build below. MilkDrop stays off: its C++ build has no
       # Android toolchain wiring.
@@ -61,8 +80,6 @@ jobs:
           cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
           [ "${CLIPPY_STATUS:-1}" != "0" ] && fault=1
           mbx test --locked --lib --no-default-features > /tmp/host-test.log 2>&1 || fault=1
-          cp Cargo.lock /tmp/Cargo.lock.orig
-          cargo update -w > /tmp/update-w.log 2>&1 || fault=1
           diff /tmp/Cargo.lock.orig Cargo.lock > /tmp/lock-diff.log 2>&1 || true
           if [ "$fault" = "0" ]; then exit 0; fi
           {
