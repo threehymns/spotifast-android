@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: read
+  # TEMPORARY (debug): the diagnostics step comments failure output on the
+  # PR. Revert before merging.
+  pull-requests: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -41,7 +44,43 @@ jobs:
       # release build below. MilkDrop stays off: its C++ build has no
       # Android toolchain wiring.
       - name: Clippy (aarch64-linux-android)
-        run: mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings
+        run: |
+          mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings 2>&1 | tee /tmp/clippy.log
+          status="${PIPESTATUS[0]}"
+          echo "CLIPPY_STATUS=$status" >> "$GITHUB_ENV"
+          exit "$status"
+      # TEMPORARY (debug): report the fmt diff, the clippy errors, and a
+      # desktop lib-test probe as a PR comment. Delete before merging.
+      - name: Report diagnostics (temporary)
+        if: always() && github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup component add rustfmt
+          fault=0
+          cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
+          [ "${CLIPPY_STATUS:-1}" != "0" ] && fault=1
+          mbx test --locked --lib --no-default-features > /tmp/host-test.log 2>&1 || fault=1
+          [ "$fault" = "0" ] && exit 0
+          {
+            echo '## diagnostics (temporary debug step)'
+            echo
+            echo '### fmt'
+            echo '```diff'
+            head -60 /tmp/fmt.log
+            echo '```'
+            echo
+            echo '### android clippy (tail)'
+            echo '```'
+            tail -100 /tmp/clippy.log
+            echo '```'
+            echo
+            echo '### desktop lib tests (tail)'
+            echo '```'
+            tail -40 /tmp/host-test.log
+            echo '```'
+          } > /tmp/diag.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
       # Building xbuild takes minutes; the binary is cached by revision and
       # the install skipped on a hit.
       - name: Cache xbuild
