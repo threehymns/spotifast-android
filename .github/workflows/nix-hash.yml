@@ -1,0 +1,38 @@
+name: nix-hash (temporary)
+
+# TEMPORARY (debug): the Cargo.lock regen invalidated the cargoDeps
+# fetchCargoVendor hash in flake.nix. This workflow runs `nix build` and
+# posts the expected `got: sha256-...` line as a PR comment so the hash
+# can be updated. DELETE THIS FILE before merging.
+on:
+  pull_request:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  hash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: Capture cargoDeps hash
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          nix build .#default 2>&1 | tee /tmp/nix.log
+          {
+            echo '## nix cargoDeps hash (temporary)'
+            echo '```'
+            grep -hE "got: *sha256-|expected: *sha256-|hash mismatch" /tmp/nix.log | head -10
+            echo '```'
+            echo
+            echo '### nix build tail (if no hash above, read this)'
+            echo '```'
+            tail -25 /tmp/nix.log
+            echo '```'
+          } > /tmp/nix-hash.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/nix-hash.md

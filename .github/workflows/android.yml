@@ -41,15 +41,19 @@ jobs:
         with:
           cache-generation: android-v1
       # Build scripts (ring's C compilation) need an Android C compiler;
-      # the check below does no linking, so no linker configuration.
-      - uses: android-actions/setup-android@v3
+      # the check below does no linking, so no linker configuration. The
+      # runner image already ships the SDK's command-line tools; only the
+      # NDK itself is installed.
       - name: Install Android NDK
         run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --install "ndk;27.0.12077973" 2>&1 | tail -3
-          NDK="$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK="$SDK/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "$NDK" >> "$GITHUB_PATH"
           echo "CC_aarch64_linux_android=$NDK/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          "$NDK/aarch64-linux-android24-clang" --version | head -1
       # TEMPORARY (debug): the lockfile is missing 15 wgpu-tree packages
       # (pre-existing staleness); regenerate it for this job and commit it
       # to the branch. Delete the step before merging (keep Cargo.lock).
@@ -85,6 +89,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Must-post: never die before the gh comment, whatever failed above.
+          set +e
           rustup component add rustfmt
           fault=0
           cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
@@ -99,7 +105,7 @@ jobs:
             echo
             echo '### fmt'
             echo '```diff'
-            head -60 /tmp/fmt.log
+            head -60 /tmp/fmt.log 2>/dev/null || echo '(no fmt log)'
             echo '```'
             echo
             echo '### android clippy (tail)'
@@ -107,19 +113,26 @@ jobs:
             tail -30 /tmp/clippy.log 2>/dev/null || echo '(no clippy log: step skipped)'
             echo '```'
             echo
+            echo '### NDK state'
+            echo '```'
+            echo "CC_aarch64_linux_android=${CC_aarch64_linux_android:-<unset>}"
+            ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null || echo '(no $ANDROID_HOME/ndk/*)'
+            command -v aarch64-linux-android24-clang 2>/dev/null || echo '(clang not on PATH)'
+            echo '```'
+            echo
             echo '### desktop lib tests (tail)'
             echo '```'
-            tail -20 /tmp/host-test.log
+            tail -20 /tmp/host-test.log 2>/dev/null || echo '(no host-test log)'
             echo '```'
             echo
             echo '### cargo update -w'
             echo '```'
-            tail -20 /tmp/update-w.log
+            tail -20 /tmp/update-w.log 2>/dev/null || echo '(no update-w log: refresh skipped or failed)'
             echo '```'
             echo
             echo '### Cargo.lock delta (truncated at 150 lines)'
             echo '```diff'
-            head -150 /tmp/lock-diff.log
+            head -150 /tmp/lock-diff.log 2>/dev/null || echo '(no lock-diff log)'
             echo '```'
           } > /tmp/diag.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
