@@ -82,8 +82,48 @@ jobs:
           status="${PIPESTATUS[0]}"
           echo "CLIPPY_STATUS=$status" >> "$GITHUB_ENV"
           exit "$status"
-      # TEMPORARY (debug): report the fmt diff, the clippy errors, and a
-      # desktop lib-test probe as a PR comment. Delete before merging.
+      # Building xbuild takes minutes; the binary is cached by revision and
+      # the install skipped on a hit.
+      - name: Cache xbuild
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/x
+          key: xbuild-${{ env.XBUILD_REV }}
+      - name: Install xbuild
+        run: |
+          if ! command -v x >/dev/null; then
+            cargo install --git https://github.com/rust-mobile/xbuild --rev "$XBUILD_REV" xbuild
+          fi
+          x --version
+      # Without a signing key the APK carries xbuild's debug signature:
+      # installable, but not Play-uploadable. Set the ANDROID_SIGNING_PEM
+      # repository secret (a PEM-encoded RSA key and certificate) to sign
+      # release builds for distribution instead.
+      - name: Build release APK
+        run: |
+          args=(--platform android --arch arm64 --format apk --release --no-default-features)
+          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
+            echo "${{ secrets.ANDROID_SIGNING_PEM }}" > "$RUNNER_TEMP/signing.pem"
+            args+=(--pem "$RUNNER_TEMP/signing.pem")
+          fi
+          x build "${args[@]}" 2>&1 | tee /tmp/xbuild.log
+          status="${PIPESTATUS[0]}"
+          echo "XBUILD_STATUS=$status" >> "$GITHUB_ENV"
+          exit "$status"
+      - name: Inspect APK
+        run: |
+          apk=(target/x/release/android/*.apk)
+          unzip -l "${apk[0]}" | tee "$RUNNER_TEMP/apk-contents.txt"
+          grep -q 'lib/arm64-v8a/libspotifast\.so' "$RUNNER_TEMP/apk-contents.txt"
+          ls -la "${apk[0]}"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotifast-android-arm64
+          path: target/x/release/android/*.apk
+      # TEMPORARY (debug): report the fmt diff, the clippy and xbuild
+      # errors, and a desktop lib-test probe as a PR comment. Runs last so
+      # every log above exists. Delete before merging.
       - name: Report diagnostics (temporary)
         if: always() && github.event.pull_request.number
         env:
@@ -95,6 +135,8 @@ jobs:
           fault=0
           cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
           [ "${CLIPPY_STATUS:-1}" != "0" ] && fault=1
+          [ "${XBUILD_STATUS:-1}" != "0" ] && fault=1
+          ls target/x/release/android/*.apk >/dev/null 2>&1 || fault=1
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libpulse-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libclang-dev
           mbx test --locked --lib --no-default-features > /tmp/host-test.log 2>&1 || fault=1
@@ -111,6 +153,11 @@ jobs:
             echo '### android clippy (tail)'
             echo '```'
             tail -30 /tmp/clippy.log 2>/dev/null || echo '(no clippy log: step skipped)'
+            echo '```'
+            echo
+            echo '### xbuild release APK (tail)'
+            echo '```'
+            tail -40 /tmp/xbuild.log 2>/dev/null || echo '(no xbuild log: step skipped)'
             echo '```'
             echo
             echo '### NDK state'
@@ -136,40 +183,4 @@ jobs:
             echo '```'
           } > /tmp/diag.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
-      # Building xbuild takes minutes; the binary is cached by revision and
-      # the install skipped on a hit.
-      - name: Cache xbuild
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/x
-          key: xbuild-${{ env.XBUILD_REV }}
-      - name: Install xbuild
-        run: |
-          if ! command -v x >/dev/null; then
-            cargo install --git https://github.com/rust-mobile/xbuild --rev "$XBUILD_REV" xbuild
-          fi
-          x --version
-      # Without a signing key the APK carries xbuild's debug signature:
-      # installable, but not Play-uploadable. Set the ANDROID_SIGNING_PEM
-      # repository secret (a PEM-encoded RSA key and certificate) to sign
-      # release builds for distribution instead.
-      - name: Build release APK
-        run: |
-          args=(--platform android --arch arm64 --format apk --release --no-default-features)
-          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
-            echo "${{ secrets.ANDROID_SIGNING_PEM }}" > "$RUNNER_TEMP/signing.pem"
-            args+=(--pem "$RUNNER_TEMP/signing.pem")
-          fi
-          x build "${args[@]}"
-      - name: Inspect APK
-        run: |
-          apk=(target/x/release/android/*.apk)
-          unzip -l "${apk[0]}" | tee "$RUNNER_TEMP/apk-contents.txt"
-          grep -q 'lib/arm64-v8a/libspotifast\.so' "$RUNNER_TEMP/apk-contents.txt"
-          ls -la "${apk[0]}"
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: spotifast-android-arm64
-          path: target/x/release/android/*.apk
           if-no-files-found: error

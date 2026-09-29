@@ -39,8 +39,7 @@ directories = "6"
 keyring-core = "1"
 # The whole UI. glow keeps the binary and the dependency tree small; wgpu is
 # not needed for a 2D music client.
-# AccessKit connects egui's control names, states, and actions to native screen readers.
-eframe = { version = "0.36", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["image", "svg"] }
 # The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
@@ -157,6 +156,10 @@ souvlaki = { version = "0.8", default-features = false }
 # portals. Android has no file picker wired yet; the cover dialog answers
 # at once there (src/backend.rs).
 rfd = "0.17.2"
+# AccessKit connects egui's control names, states, and actions to native
+# screen readers. eframe only supports it with android-game-activity, so
+# Android (NativeActivity, below) builds without it.
+eframe = { version = "0.36", features = ["accesskit"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # eframe's NativeActivity backend through winit. Features merge with the
