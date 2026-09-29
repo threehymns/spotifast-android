@@ -65,13 +65,23 @@ fn pip_params<'env>(
 /// Enter PiP with the skin stack's aspect. `false` when PiP is unsupported
 /// or disabled, or any JNI call fails: the caller falls back to the
 /// fullscreen skin.
+///
+/// Every outcome is logged at info or above (release builds strip
+/// debug): the attempt, a refusal, and any JNI error with its detail.
 pub fn enter_winamp_pip(stack_height: u32) -> bool {
+    let aspect = pip_aspect(stack_height);
+    log::info!(
+        "entering picture-in-picture (stack {stack_height}, aspect {}:{})",
+        aspect.0,
+        aspect.1
+    );
     let Some((vm, activity)) = crate::auth_android::activity_and_vm() else {
+        log::warn!("picture-in-picture entry without a stashed activity");
         return false;
     };
     let entered: jni::errors::Result<bool> = vm.attach_current_thread(
         |env| -> jni::errors::Result<bool> {
-            let params = pip_params(env, pip_aspect(stack_height))?;
+            let params = pip_params(env, aspect)?;
             let entered = env
                 .call_method(
                     activity.as_obj(),
@@ -84,9 +94,13 @@ pub fn enter_winamp_pip(stack_height: u32) -> bool {
         },
     );
     match entered {
-        Ok(entered) => entered,
+        Ok(true) => true,
+        Ok(false) => {
+            log::warn!("picture-in-picture entry refused by the system");
+            false
+        }
         Err(error) => {
-            log::debug!("unable to enter picture-in-picture: {error}");
+            log::warn!("unable to enter picture-in-picture: {error}");
             false
         }
     }
@@ -109,7 +123,7 @@ pub fn update_winamp_pip(stack_height: u32) {
         )?;
         Ok(())
     }) {
-        log::debug!("unable to update the picture-in-picture aspect: {error}");
+        log::warn!("unable to update the picture-in-picture aspect: {error}");
     }
 }
 
@@ -137,6 +151,6 @@ pub fn exit_pip_to_fullscreen() {
         )?;
         Ok(())
     }) {
-        log::debug!("unable to leave picture-in-picture: {error}");
+        log::warn!("unable to leave picture-in-picture: {error}");
     }
 }
