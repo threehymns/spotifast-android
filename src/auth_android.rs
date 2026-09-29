@@ -201,3 +201,89 @@ fn keepalive_intent<'env>(
         &[JValue::from(activity), JValue::from(&service)],
     )
 }
+
+/// The system clipboard's text, if any. egui-winit compiles its real
+/// clipboard out on Android (arboard is desktop-only), and winit's Android
+/// backend emits no text-input events at all, so neither egui's own Paste
+/// menu nor Gboard can reach a text field. The app's paste buttons read
+/// the clipboard directly instead: `getSystemService("clipboard")`, then
+/// `getPrimaryClip()`, its first item, `getText()`. `None` when the
+/// clipboard is empty or non-text, the activity was never stashed, or any
+/// JNI call fails; failures are logged, never panicked. (Android 12+
+/// shows its standard "pasted from ..." toast on every read, so callers
+/// only read on an explicit tap.)
+pub fn read_clipboard_text() -> Option<String> {
+    let (Some(vm), Some(activity)) = (KEEPALIVE_VM.get(), KEEPALIVE_ACTIVITY.get()) else {
+        return None;
+    };
+    let read: jni::errors::Result<Option<String>> =
+        vm.attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+            let name = env.new_string("clipboard")?;
+            let manager = env
+                .call_method(
+                    activity.as_obj(),
+                    jni::jni_str!("getSystemService"),
+                    jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                    &[JValue::from(&name)],
+                )?
+                .l()?;
+            let clip = env
+                .call_method(
+                    &manager,
+                    jni::jni_str!("getPrimaryClip"),
+                    jni::jni_sig!("()Landroid/content/ClipData;"),
+                    &[],
+                )?
+                .l()?;
+            if clip.is_null() {
+                return Ok(None);
+            }
+            let count = env
+                .call_method(
+                    &clip,
+                    jni::jni_str!("getItemCount"),
+                    jni::jni_sig!("()I"),
+                    &[],
+                )?
+                .i()?;
+            if count <= 0 {
+                return Ok(None);
+            }
+            let item = env
+                .call_method(
+                    &clip,
+                    jni::jni_str!("getItemAt"),
+                    jni::jni_sig!("(I)Landroid/content/ClipData$Item;"),
+                    &[JValue::from(0i32)],
+                )?
+                .l()?;
+            let text = env
+                .call_method(
+                    &item,
+                    jni::jni_str!("getText"),
+                    jni::jni_sig!("()Ljava/lang/CharSequence;"),
+                    &[],
+                )?
+                .l()?;
+            if text.is_null() {
+                return Ok(None);
+            }
+            let string = env
+                .call_method(
+                    &text,
+                    jni::jni_str!("toString"),
+                    jni::jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let string: JString = env.cast_local::<JString>(string)?;
+            Ok(Some(string.try_to_string(env)?))
+        });
+    match read {
+        Ok(text) => text,
+        Err(error) => {
+            log::debug!("unable to read the system clipboard: {error}");
+            None
+        }
+    }
+}

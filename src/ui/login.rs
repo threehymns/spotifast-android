@@ -131,6 +131,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                                     );
                                 });
                             ctx.data_mut(|data| data.insert_temp(paste_id, pasted.clone()));
+                            // Neither egui's Paste menu nor Gboard can
+                            // reach a text field on Android (no OS
+                            // clipboard in egui-winit, no text events
+                            // from winit), so the field gets its own
+                            // paste button there.
+                            #[cfg(target_os = "android")]
+                            let paste = theme::pill_button(
+                                ui,
+                                &palette,
+                                &gettext(locale, "Paste"),
+                                false,
+                            );
+                            #[cfg(target_os = "android")]
+                            if paste.clicked() {
+                                pasted = crate::auth_android::read_clipboard_text()
+                                    .unwrap_or(pasted);
+                                ctx.data_mut(|data| data.insert_temp(paste_id, pasted.clone()));
+                            }
                             let response = theme::pill_button(
                                 ui,
                                 &palette,
