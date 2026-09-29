@@ -154,6 +154,7 @@ jobs:
             "$BT/apksigner" sign --ks "$KEEP/signing.p12" --ks-pass:pass:spotifast --ks-key-alias spotifast "$APK_ABS"
           else
             KS=~/.android/debug.keystore
+            mkdir -p "$(dirname "$KS")"
             [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10950 -dname "CN=Android Debug,O=Android,C=US"
             "$BT/apksigner" sign --ks "$KS" --ks-pass:pass:android --ks-key-alias androiddebugkey --key-pass:pass:android "$APK_ABS"
           fi
