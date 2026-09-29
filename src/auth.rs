@@ -37,9 +37,10 @@ pub const WEB_REDIRECT_PORT: u16 = 8989;
 
 pub const REDIRECT_PATH: &str = "/login";
 
-/// Where Spotify sends the Android sign-in: a custom scheme (registered in
-/// manifest.yaml and in Spotify's dashboard), because the loopback listener
-/// below is frozen along with the process under a fullscreen browser.
+/// Reserved custom scheme for Android sign-in (`manifest.yaml` already
+/// catches it): usable once a fork-owned client ID registers it in
+/// Spotify's dashboard. Until then Android uses the loopback URIs below,
+/// which the shared client IDs already have.
 pub const ANDROID_REDIRECT_URI: &str = "rocks.spotifast.spotifast://callback";
 
 /// Playback: what librespot needs to stream and join Spotify Connect.
@@ -110,14 +111,7 @@ impl Grant {
     }
 
     pub fn redirect_uri(&self) -> String {
-        #[cfg(target_os = "android")]
-        {
-            ANDROID_REDIRECT_URI.to_string()
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
-        }
+        format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
     }
 }
 
