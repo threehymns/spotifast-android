@@ -5833,6 +5833,7 @@ dependencies = [
  "hyper-util",
  "image",
  "jiff",
+ "jni 0.22.4",
  "keyring-core",
  "librespot-connect",
  "librespot-core",
