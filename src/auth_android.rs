@@ -190,11 +190,27 @@ fn keepalive_intent<'env>(
     env: &mut Env<'env>,
     activity: &JObject,
 ) -> jni::errors::Result<JObject<'env>> {
-    let name = jni::jni_str!("rocks/spotifast/spotifast/AuthKeepaliveService");
-    let service = env.find_class(name)?;
-    // SAFETY: re-wraps the local ref above without taking ownership; the
-    // class outlives this call and `JObject` never frees.
-    let service = unsafe { JObject::from_raw(env, service.as_raw()) };
+    // `FindClass` only sees the boot loader from a bare attached thread,
+    // so the service class would throw ClassNotFound here (sign-in runs
+    // on a backend worker). Load through the activity's own loader
+    // instead; `loadClass` takes the dotted binary name, not slashes.
+    let loader = env
+        .call_method(
+            activity,
+            jni::jni_str!("getClassLoader"),
+            jni::jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )?
+        .l()?;
+    let name = env.new_string("rocks.spotifast.spotifast.AuthKeepaliveService")?;
+    let service = env
+        .call_method(
+            &loader,
+            jni::jni_str!("loadClass"),
+            jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/Class;"),
+            &[JValue::from(&name)],
+        )?
+        .l()?;
     env.new_object(
         jni::jni_str!("android/content/Intent"),
         jni::jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
