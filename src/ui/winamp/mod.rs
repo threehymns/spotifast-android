@@ -38,7 +38,7 @@ const VIS_FRAME: Duration = Duration::from_micros(16_667);
 
 /// The stack's height in skin pixels: the main window, and the equalizer
 /// and the playlist under it, whichever are open.
-fn stack_height(settings: &crate::settings::Settings) -> u32 {
+pub(crate) fn stack_height(settings: &crate::settings::Settings) -> u32 {
     let mut height = if settings.winamp_shaded {
         layout::SHADE_HEIGHT
     } else {
@@ -114,6 +114,43 @@ fn fit_window(ctx: &egui::Context, settings: &crate::settings::Settings, unit: f
     ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(wanted));
     ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(wanted));
     ctx.send_viewport_cmd(ViewportCommand::InnerSize(wanted));
+}
+
+/// Fit the whole skin stack into the viewport and center it: Android hands
+/// the skin whatever the activity has (PiP, the fullscreen fallback,
+/// split-screen, rotation), and every sprite and control scales through
+/// the returned unit and origin, so the buttons follow the size.
+#[cfg(target_os = "android")]
+fn android_fit(
+    _unit: f32,
+    origin: Pos2,
+    avail: Vec2,
+    settings: &crate::settings::Settings,
+) -> (f32, Pos2) {
+    let stack = stack_height(settings) as f32;
+    let fit = (avail.x / layout::WINDOW_WIDTH as f32)
+        .min(avail.y / stack)
+        .max(0.05); // A collapsed viewport still needs a nonzero scale.
+    let origin = origin
+        + vec2(
+            (avail.x - layout::WINDOW_WIDTH as f32 * fit) / 2.0,
+            (avail.y - stack * fit) / 2.0,
+        );
+    (fit, origin)
+}
+
+/// Refresh the PiP aspect when the stack changed height (shade, playlist,
+/// equalizer toggles). Only the change calls into JNI; outside PiP the
+/// params wait for the next entry.
+#[cfg(target_os = "android")]
+fn track_pip_aspect(ctx: &egui::Context, settings: &crate::settings::Settings) {
+    let id = Id::new("pip-stack-height");
+    let stack = stack_height(settings);
+    let last: Option<u32> = ctx.data(|data| data.get_temp(id));
+    if last != Some(stack) {
+        ctx.data_mut(|data| data.insert_temp(id, stack));
+        crate::pip_android::update_winamp_pip(stack);
+    }
 }
 
 /// Draws the skin's sprites into the window and reads the pointer against
@@ -300,8 +337,12 @@ impl View<'_> {
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let unit = unit(app, &ctx);
-    fit_window(&ctx, &app.settings, unit);
     let origin = ui.max_rect().min;
+    #[cfg(target_os = "android")]
+    let (unit, origin) = android_fit(unit, origin, ui.max_rect().size(), &app.settings);
+    fit_window(&ctx, &app.settings, unit);
+    #[cfg(target_os = "android")]
+    track_pip_aspect(&ctx, &app.settings);
     let (outer, focused) = ctx.input(|input| {
         let viewport = input.viewport();
         (viewport.outer_rect, viewport.focused)

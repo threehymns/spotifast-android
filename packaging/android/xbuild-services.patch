@@ -1,5 +1,4 @@
 diff --git a/apk/src/manifest.rs b/apk/src/manifest.rs
-index c1e4ffd..ab4ce02 100644
 --- a/apk/src/manifest.rs
 +++ b/apk/src/manifest.rs
 @@ -82,6 +82,21 @@ pub struct Application {
@@ -24,3 +23,12 @@ index c1e4ffd..ab4ce02 100644
  }
  
  /// Android [activity element](https://developer.android.com/guide/topics/manifest/activity-element).
+@@ -113,6 +113,8 @@ pub struct Activity {
+     pub intent_filters: Vec<IntentFilter>,
+     #[serde(rename(serialize = "android:colorMode"))]
+     pub color_mode: Option<String>,
++    #[serde(rename(serialize = "android:supportsPictureInPicture"))]
++    pub supports_picture_in_picture: Option<bool>,
+ }
+ 
+ /// Android [intent filter element](https://developer.android.com/guide/topics/manifest/intent-filter-element).

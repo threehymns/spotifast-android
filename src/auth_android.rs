@@ -303,3 +303,10 @@ pub fn read_clipboard_text() -> Option<String> {
         }
     }
 }
+
+/// The stashed main activity and its VM, for Android APIs called outside
+/// the sign-in flow (picture-in-picture). `None` until [`init_keepalive`]
+/// ran.
+pub fn activity_and_vm() -> Option<(&'static jni::JavaVM, &'static Global<JObject<'static>>)> {
+    Some((KEEPALIVE_VM.get()?, KEEPALIVE_ACTIVITY.get()?))
+}

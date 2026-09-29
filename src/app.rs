@@ -9201,6 +9201,19 @@ impl App {
                 self.session_window_pos = self.last_window_pos.or(self.session_window_pos);
                 self.settings.winamp_window = !self.settings.winamp_window;
                 self.settings_dirty = true;
+                // Android has no mini-player window: the toggle enters
+                // picture-in-picture instead, and leaving the skin expands
+                // back to fullscreen. A device without PiP falls back to
+                // the fullscreen skin.
+                #[cfg(target_os = "android")]
+                if self.settings.winamp_window {
+                    let stack = crate::ui::winamp::stack_height(&self.settings);
+                    if !crate::pip_android::enter_winamp_pip(stack) {
+                        self.toast(gettext(self.locale, "Picture-in-picture isn't available"));
+                    }
+                } else {
+                    crate::pip_android::exit_pip_to_fullscreen();
+                }
                 self.close_for_window_switch(ctx);
             }
             Action::SetSkin(name) => {

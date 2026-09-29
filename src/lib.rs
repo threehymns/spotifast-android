@@ -44,6 +44,8 @@ pub mod milkdrop;
 pub mod model;
 pub mod opener;
 pub mod paths;
+#[cfg(target_os = "android")]
+pub mod pip_android;
 pub mod player;
 pub mod playlist_cover;
 pub mod resample;

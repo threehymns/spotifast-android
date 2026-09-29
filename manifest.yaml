@@ -28,7 +28,12 @@ android:
       # custom-scheme redirect as a second instance while the first is
       # frozen under the browser (src/auth_android.rs).
       activities:
-        - intent_filters:
+        # Picture-in-picture for the Winamp mini player (src/pip_android.rs).
+        # The flag below comes from the xbuild patch; xbuild's default
+        # configChanges already covers the PiP set, so entering never
+        # restarts the activity.
+        - supports_picture_in_picture: true
+          intent_filters:
             - actions: [android.intent.action.VIEW]
               categories:
                 - android.intent.category.DEFAULT
