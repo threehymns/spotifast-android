@@ -37,7 +37,9 @@ jobs:
       # main-only saves every revision recompiles cold (~30 minutes).
       # Entries are scoped to the PR's merge ref; clear them on close if
       # the repository's 10 GB cache fills up.
-      - uses: jdx/mr-boxington-action@v1
+      # Pinned past v1.5.0: save-on-pull-request is only on main so far.
+      # Move back to @v1 once a release carries it.
+      - uses: jdx/mr-boxington-action@91d7f48283e5557f0eca254d745cad55aa573b3a
         with:
           cache-generation: android-v1
           save-on-pull-request: true
