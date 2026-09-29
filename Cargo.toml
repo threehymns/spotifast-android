@@ -274,7 +274,11 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "0b431145c
 # through close requests behind a feature Spotifast leaves off (winit#4692),
 # and file drag and drop on Wayland. eframe from the fork above calls the
 # Occluded API. Move both forks together with the other apps.
-winit = { git = "https://github.com/crmne/winit", rev = "fc4f39ff0993dd235952b749dd16b856c0194e1f" }
+# threehymns/winit android-pip is that fork plus Android redrawing while the
+# surface is alive instead of while resumed, so picture-in-picture keeps
+# rendering (the diff is packaging/android/winit-pip.patch). Rebase it onto
+# crmne/winit when moving.
+winit = { git = "https://github.com/threehymns/winit", rev = "61994042e8dc8e692141c3c5882711a4a867eec4" }
 # projectm-sys 1.2.2 hardcodes the Visual Studio 17 2022 CMake generator,
 # which GitHub's windows-latest images no longer carry; the fork lets an
 # explicit CMAKE_GENERATOR win. Drop when upstream takes the change.
