@@ -66,18 +66,19 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
     // SAFETY: both pointers are valid while `app` is alive, the closure
     // runs attached, and the borrowed activity reference is never freed.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    let caught: jni::errors::Result<Option<String>> = vm.attach_current_thread(|env| {
+    let caught: jni::errors::Result<Option<String>> = vm.attach_current_thread(
+        |env| -> jni::errors::Result<Option<String>> {
         let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
-        let intent =
-            env.call_method(
+        let intent = env
+            .call_method(
                 &activity,
                 jni::jni_str!("getIntent"),
                 jni::jni_sig!("()Landroid/content/Intent;"),
                 &[],
             )?
             .l()?;
-        let data =
-            env.call_method(
+        let data = env
+            .call_method(
                 &intent,
                 jni::jni_str!("getDataString"),
                 jni::jni_sig!("()Ljava/lang/String;"),
@@ -100,7 +101,7 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
 pub fn finish_activity(app: &AndroidApp) {
     // SAFETY: as in `launch_intent_data`.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    if let Err(error) = vm.attach_current_thread(|env| {
+    if let Err(error) = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
         let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
         env.call_method(
             &activity,
@@ -151,7 +152,7 @@ pub fn start_keepalive() {
     let (Some(vm), Some(activity)) = (KEEPALIVE_VM.get(), KEEPALIVE_ACTIVITY.get()) else {
         return;
     };
-    if let Err(error) = vm.attach_current_thread(|env| {
+    if let Err(error) = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
         let intent = keepalive_intent(env, activity.as_obj())?;
         env.call_method(
             activity.as_obj(),
@@ -170,7 +171,7 @@ pub fn stop_keepalive() {
     let (Some(vm), Some(activity)) = (KEEPALIVE_VM.get(), KEEPALIVE_ACTIVITY.get()) else {
         return;
     };
-    if let Err(error) = vm.attach_current_thread(|env| {
+    if let Err(error) = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
         let intent = keepalive_intent(env, activity.as_obj())?;
         env.call_method(
             activity.as_obj(),

@@ -271,7 +271,8 @@ struct FileStore {
 #[cfg(any(target_os = "android", test))]
 impl FileStore {
     fn new(dirs: &AppDirs) -> Self {
-        Self { dir: dirs.credentials_dir() }
+        let dir = dirs.credentials_dir();
+        Self { dir }
     }
 
     /// Keys are `{64 hex}:{slot}`; the colon cannot survive as a file name
@@ -1377,7 +1378,8 @@ mod tests {
     }
 
     fn file_store_at(dir: &std::path::Path) -> FileStore {
-        FileStore { dir: dir.to_path_buf() }
+        let dir = dir.to_path_buf();
+        FileStore { dir }
     }
 
     #[test]

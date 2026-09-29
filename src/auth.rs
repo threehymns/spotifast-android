@@ -733,6 +733,8 @@ mod tests {
         assert!(parse_pasted_redirect("http://127.0.0.1:8989/other?code=c&state=s", "s").is_err());
         let uri = "http://127.0.0.1:8989/login?code=c&state=wrong";
         assert!(parse_pasted_redirect(uri, "s").is_err());
-        assert!(parse_pasted_redirect("  http://127.0.0.1:8989/login?code=c&state=s\n", "s").is_ok());
+        assert!(
+            parse_pasted_redirect("  http://127.0.0.1:8989/login?code=c&state=s\n", "s").is_ok()
+        );
     }
 }

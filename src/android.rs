@@ -217,7 +217,9 @@ impl eframe::App for Shell {
         // A redirect caught while frozen lands here; hand it to the
         // backend while a sign-in is waiting (strays are ignored).
         if crate::auth_android::redirect_path(&self.app.dirs).exists() {
-            self.app.backend.send(crate::backend::Command::CheckAuthRedirect);
+            self.app
+                .backend
+                .send(crate::backend::Command::CheckAuthRedirect);
         }
     }
 

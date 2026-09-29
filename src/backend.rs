@@ -594,7 +594,9 @@ pub enum Command {
     CheckAuthRedirect,
     /// The user pasted the browser's redirect URL (fallback when the
     /// loopback listener is unreachable).
-    SubmitPastedRedirect { url: String },
+    SubmitPastedRedirect {
+        url: String,
+    },
     SignOut,
     /// Authorize local playback on this computer (a separate browser grant).
     AuthorizePlayback,

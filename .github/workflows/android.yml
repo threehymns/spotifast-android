@@ -199,17 +199,17 @@ jobs:
             echo
             echo '### fmt'
             echo '```diff'
-            head -60 /tmp/fmt.log 2>/dev/null || echo '(no fmt log)'
+            head -250 /tmp/fmt.log 2>/dev/null || echo '(no fmt log)'
             echo '```'
             echo
             echo '### android clippy (tail)'
             echo '```'
-            tail -30 /tmp/clippy.log 2>/dev/null || echo '(no clippy log: step skipped)'
+            tail -120 /tmp/clippy.log 2>/dev/null || echo '(no clippy log: step skipped)'
             echo '```'
             echo
             echo '### xbuild release APK (tail)'
             echo '```'
-            tail -40 /tmp/xbuild.log 2>/dev/null || echo '(no xbuild log: step skipped)'
+            tail -150 /tmp/xbuild.log 2>/dev/null || echo '(no xbuild log: step skipped)'
             echo '```'
             echo
             echo '### NDK state'
