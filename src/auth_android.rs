@@ -32,11 +32,9 @@ pub fn redirect_path(dirs: &AppDirs) -> PathBuf {
 /// Atomically stash a caught redirect URI for the main instance.
 pub fn stash_redirect(dirs: &AppDirs, uri: &str) {
     let path = redirect_path(dirs);
-    if let Some(parent) = path.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            log::warn!("unable to create the redirect handoff directory");
-            return;
-        }
+    if let Some(parent) = path.parent() && std::fs::create_dir_all(parent).is_err() {
+        log::warn!("unable to create the redirect handoff directory");
+        return;
     }
     let temporary = path.with_extension("tmp");
     if std::fs::write(&temporary, uri).is_err()
@@ -195,9 +193,9 @@ fn keepalive_intent<'env>(
     // SAFETY: re-wraps the local ref above without taking ownership; the
     // class outlives this call and `JObject` never frees.
     let service = unsafe { JObject::from_raw(env, service.as_raw()) };
-    Ok(env.new_object(
+    env.new_object(
         jni::jni_str!("android/content/Intent"),
         jni::jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
         &[JValue::from(activity), JValue::from(&service)],
-    )?)
+    )
 }
