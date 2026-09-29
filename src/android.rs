@@ -40,6 +40,18 @@ pub extern "C" fn android_main(app: AndroidApp) {
     }));
 
     let dirs = android_dirs(&app);
+    // A VIEW redirect for the OAuth custom scheme arrives as a second
+    // activity instance while the first is frozen under the browser. It
+    // never starts the app: stash the URI and get out of the way.
+    if let Some(uri) = crate::auth_android::launch_intent_data(&app)
+        && uri.starts_with(crate::auth::ANDROID_REDIRECT_URI)
+    {
+        log::info!("caught an authorization redirect; handing it to the main instance");
+        crate::auth_android::stash_redirect(&dirs, &uri);
+        crate::auth_android::finish_activity(&app);
+        return;
+    }
+    crate::auth_android::clear_redirect(&dirs);
     let dirs_ready = dirs.ensure();
     if let Err(error) = dirs_ready {
         log::warn!("unable to create the application directories: {error}");
@@ -198,6 +210,11 @@ impl eframe::App for Shell {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.background_frame(ctx);
+        // A redirect caught while frozen lands here; hand it to the
+        // backend while a sign-in is waiting (strays are ignored).
+        if crate::auth_android::redirect_path(&self.app.dirs).exists() {
+            self.app.backend.send(crate::backend::Command::CheckAuthRedirect);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

@@ -7,6 +7,8 @@ pub mod app;
 #[cfg(target_os = "linux")]
 pub mod appearance;
 pub mod auth;
+#[cfg(target_os = "android")]
+pub mod auth_android;
 pub mod autoscroll;
 pub mod backend;
 pub mod bidi;

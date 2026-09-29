@@ -76,6 +76,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                     match &app.auth {
                         AuthStatus::WaitingForBrowser { url } => {
                             let url = url.clone();
+                            // Android has no desktop opener, so the backend
+                            // skips auto-open there; the waiting screen opens
+                            // the browser itself, once per sign-in URL.
+                            #[cfg(target_os = "android")]
+                            {
+                                let opened_id = egui::Id::new("login-browser-opened");
+                                let opened =
+                                    ctx.data(|data| data.get_temp::<String>(opened_id));
+                                if opened.as_deref() != Some(url.as_str()) {
+                                    ctx.open_url(egui::OpenUrl::new_tab(url.clone()));
+                                    ctx.data_mut(|data| {
+                                        data.insert_temp(opened_id, url.clone())
+                                    });
+                                }
+                            }
                             ui.horizontal(|ui| {
                                 ui.add_space((ui.available_width() - 250.0).max(0.0) / 2.0);
                                 theme::spinner(ui, 18.0, palette.accent);

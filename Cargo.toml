@@ -169,6 +169,10 @@ eframe = { version = "0.36", default-features = false, features = ["android-nati
 # The [patch] below swaps this for the same winit fork eframe uses.
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
 # Logcat needs no crate: src/android.rs writes to it with one FFI call.
+# Reading the OAuth redirect off the launch intent and finishing the
+# redirect-catcher instance (src/auth_android.rs). Same release line
+# android-activity uses, so the JNI types agree.
+jni = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }

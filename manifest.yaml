@@ -19,3 +19,16 @@ android:
       - {name: android.permission.ACCESS_NETWORK_STATE}
     application:
       label: Spotifast
+      # One activity: xbuild fills in NativeActivity, singleTop, and the
+      # MAIN/LAUNCHER filter. The VIEW filter below catches the OAuth
+      # custom-scheme redirect as a second instance while the first is
+      # frozen under the browser (src/auth_android.rs).
+      activities:
+        - intent_filters:
+            - actions: [android.intent.action.VIEW]
+              categories:
+                - android.intent.category.DEFAULT
+                - android.intent.category.BROWSABLE
+              data:
+                - scheme: rocks.spotifast.spotifast
+                  host: callback

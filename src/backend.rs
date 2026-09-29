@@ -589,6 +589,9 @@ pub enum Command {
         config: ProxyConfig,
     },
     CancelSignIn,
+    /// A redirect-catcher instance stashed an OAuth response (Android only).
+    #[cfg(target_os = "android")]
+    CheckAuthRedirect,
     SignOut,
     /// Authorize local playback on this computer (a separate browser grant).
     AuthorizePlayback,
@@ -1362,6 +1365,10 @@ struct Worker {
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
     authorizing_source: Option<ApiSource>,
+    /// Completes the pending sign-in with a VIEW-intent redirect caught
+    /// while frozen (Android only; see `Command::CheckAuthRedirect`).
+    #[cfg(target_os = "android")]
+    auth_redirect_tx: Option<tokio::sync::oneshot::Sender<String>>,
     pending_authorization: Option<ApiSource>,
     reconnects: Vec<Instant>,
     /// What the engine was playing when it went down, to load again once
@@ -1421,6 +1428,8 @@ impl Worker {
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
+            #[cfg(target_os = "android")]
+            auth_redirect_tx: None,
             pending_authorization: None,
             reconnects: Vec::new(),
             resume: None,
@@ -1672,6 +1681,16 @@ impl Worker {
                         });
                         waker.wake();
                     });
+                }
+                #[cfg(target_os = "android")]
+                Command::CheckAuthRedirect => {
+                    if let Some(uri) = crate::auth_android::take_redirect(&self.dirs) {
+                        if let Some(sender) = self.auth_redirect_tx.take() {
+                            let _ = sender.send(uri);
+                        } else {
+                            log::debug!("stray authorization redirect; no sign-in pending");
+                        }
+                    }
                 }
                 Command::Shutdown => break,
                 Command::SignIn { request, config } => self.change_proxy(request, config, true),
@@ -2365,6 +2384,12 @@ impl Worker {
         let flow = crate::auth::begin(grant.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
+        #[cfg(target_os = "android")]
+        crate::auth_android::clear_redirect(&self.dirs);
+        #[cfg(target_os = "android")]
+        let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
+        #[cfg(target_os = "android")]
+        self.auth_redirect_tx = Some(redirect_tx);
         self.authorizing_source = Some(source);
         self.api.set_state(source, SessionState::Authorizing);
         if source == ApiSource::Shared {
@@ -2372,7 +2397,11 @@ impl Worker {
                 url: flow.url.clone(),
             }));
         }
+        // Android has no desktop opener; the waiting screen opens the
+        // browser itself (src/ui/login.rs), once per sign-in URL.
+        #[cfg(not(target_os = "android"))]
         let browser_url = flow.url.clone();
+        #[cfg(not(target_os = "android"))]
         tokio::task::spawn_blocking(move || {
             if let Err(error) = crate::opener::open(&browser_url) {
                 log::warn!("unable to open a browser: {error}");
@@ -2383,6 +2412,17 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
+                // Android races the loopback listener (split-screen keeps
+                // the app alive) against a redirect caught while frozen.
+                #[cfg(target_os = "android")]
+                let code = crate::auth::wait_for_code_android(
+                    grant.redirect_port,
+                    &flow.state,
+                    redirect_rx,
+                    cancel_rx,
+                )
+                .await?;
+                #[cfg(not(target_os = "android"))]
                 let code =
                     crate::auth::wait_for_code(grant.redirect_port, &flow.state, cancel_rx).await?;
                 let response =
@@ -2630,8 +2670,18 @@ impl Worker {
         let flow = crate::auth::begin(grant.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
+        #[cfg(target_os = "android")]
+        crate::auth_android::clear_redirect(&self.dirs);
+        #[cfg(target_os = "android")]
+        let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
+        #[cfg(target_os = "android")]
+        self.auth_redirect_tx = Some(redirect_tx);
         self.emit(Event::Playback(LocalPlayback::Authorizing));
+        // Android has no desktop opener; nothing opens the playback
+        // grant there (its URL has no waiting screen yet).
+        #[cfg(not(target_os = "android"))]
         let browser_url = flow.url.clone();
+        #[cfg(not(target_os = "android"))]
         tokio::task::spawn_blocking(move || {
             if let Err(error) = crate::opener::open(&browser_url) {
                 log::warn!("unable to open a browser: {error}");
@@ -2643,6 +2693,17 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
+                // Android races the loopback listener (split-screen keeps
+                // the app alive) against a redirect caught while frozen.
+                #[cfg(target_os = "android")]
+                let code = crate::auth::wait_for_code_android(
+                    grant.redirect_port,
+                    &flow.state,
+                    redirect_rx,
+                    cancel_rx,
+                )
+                .await?;
+                #[cfg(not(target_os = "android"))]
                 let code =
                     crate::auth::wait_for_code(grant.redirect_port, &flow.state, cancel_rx).await?;
                 crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await

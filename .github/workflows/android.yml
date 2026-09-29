@@ -183,4 +183,3 @@ jobs:
             echo '```'
           } > /tmp/diag.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
-          if-no-files-found: error

@@ -37,6 +37,11 @@ pub const WEB_REDIRECT_PORT: u16 = 8989;
 
 pub const REDIRECT_PATH: &str = "/login";
 
+/// Where Spotify sends the Android sign-in: a custom scheme (registered in
+/// manifest.yaml and in Spotify's dashboard), because the loopback listener
+/// below is frozen along with the process under a fullscreen browser.
+pub const ANDROID_REDIRECT_URI: &str = "rocks.spotifast.spotifast://callback";
+
 /// Playback: what librespot needs to stream and join Spotify Connect.
 pub const PLAYBACK_SCOPES: &[&str] = &["streaming"];
 
@@ -105,7 +110,14 @@ impl Grant {
     }
 
     pub fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
+        #[cfg(target_os = "android")]
+        {
+            ANDROID_REDIRECT_URI.to_string()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
+        }
     }
 }
 
@@ -209,6 +221,27 @@ pub async fn wait_for_code(
     }
 }
 
+/// Android: race the loopback listener (split-screen keeps the app alive)
+/// against a VIEW-intent redirect stashed while frozen (see
+/// `crate::auth_android`). Cancellation and the ten-minute timeout ride
+/// along with the loopback half: whichever half finishes first wins, and
+/// the other future is dropped.
+#[cfg(target_os = "android")]
+pub async fn wait_for_code_android(
+    port: u16,
+    expected_state: &str,
+    mut redirect: tokio::sync::oneshot::Receiver<String>,
+    cancel: watch::Receiver<bool>,
+) -> Result<String> {
+    tokio::select! {
+        code = wait_for_code(port, expected_state, cancel) => code,
+        uri = &mut redirect => parse_view_intent(
+            &uri.map_err(|_| anyhow!("sign-in interrupted; try again"))?,
+            expected_state,
+        ),
+    }
+}
+
 fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
     let target = line
         .split_whitespace()
@@ -218,6 +251,20 @@ fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
     if path != REDIRECT_PATH {
         bail!("unexpected redirect path");
     }
+    parse_redirect_query(query, expected_state)
+}
+
+/// Parse the authorization response from an Android VIEW-intent URI, e.g.
+/// `rocks.spotifast.spotifast://callback?code=...&state=...`.
+pub fn parse_view_intent(uri: &str, expected_state: &str) -> Result<String> {
+    let query = uri
+        .strip_prefix(ANDROID_REDIRECT_URI)
+        .and_then(|rest| rest.strip_prefix('?'))
+        .ok_or_else(|| anyhow!("not a Spotifast authorization redirect"))?;
+    parse_redirect_query(query, expected_state)
+}
+
+fn parse_redirect_query(query: &str, expected_state: &str) -> Result<String> {
     let mut code = None;
     let mut state = None;
     let mut error = None;
@@ -631,5 +678,21 @@ mod tests {
             assert!(!legacy.exists());
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn view_intent_uris_yield_the_code() {
+        let uri = format!("{ANDROID_REDIRECT_URI}?code=auth-code&state=state-1");
+        assert_eq!(parse_view_intent(&uri, "state-1").unwrap(), "auth-code");
+    }
+
+    #[test]
+    fn view_intent_uris_reject_the_wrong_app_or_state() {
+        assert!(parse_view_intent("other.app://callback?code=c&state=s", "s").is_err());
+        assert!(parse_view_intent(&format!("{ANDROID_REDIRECT_URI}?code=c"), "s").is_err());
+        let uri = format!("{ANDROID_REDIRECT_URI}?code=c&state=wrong");
+        assert!(parse_view_intent(&uri, "s").is_err());
+        let uri = format!("{ANDROID_REDIRECT_URI}?error=access_denied&state=s");
+        assert!(parse_view_intent(&uri, "s").is_err());
     }
 }
