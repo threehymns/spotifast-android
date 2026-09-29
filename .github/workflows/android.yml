@@ -137,7 +137,7 @@ jobs:
           command -v javac zip
           KEEP="$RUNNER_TEMP/keepalive"
           rm -rf "$KEEP" && mkdir -p "$KEEP/classes" "$KEEP/merged"
-          javac -source 8 -target 8 -nowarn -cp "$JAR" -d "$KEEP/classes" android/AuthKeepaliveService.java
+          javac -source 8 -target 8 -nowarn -cp "$JAR" -d "$KEEP/classes" packaging/android/AuthKeepaliveService.java
           APK=(target/x/release/android/*.apk)
           APK_ABS="$GITHUB_WORKSPACE/${APK[0]}"
           if unzip -l "$APK_ABS" | grep -q 'classes\.dex'; then

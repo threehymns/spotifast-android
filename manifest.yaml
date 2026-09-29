@@ -37,7 +37,7 @@ android:
                 - scheme: rocks.spotifast.spotifast
                   host: callback
       services:
-        # The sign-in keepalive (android/AuthKeepaliveService.java): a
+        # The sign-in keepalive (packaging/android/AuthKeepaliveService.java): a
         # foreground service that holds the process unfrozen while the
         # browser is in front. Needs the xbuild services patch
         # (packaging/android/xbuild-services.patch, applied in CI).
