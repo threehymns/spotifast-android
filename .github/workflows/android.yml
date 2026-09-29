@@ -35,10 +35,15 @@ jobs:
       - name: Android target
         run: rustup target add aarch64-linux-android
       # After the toolchain, so the cache key follows the pinned rustc. See
-      # ci.yml for why each job sets its own generation.
+      # ci.yml for why each job sets its own generation. Pull-request runs
+      # save as well: nothing else builds this target tree, and with
+      # main-only saves every revision recompiles cold (~30 minutes).
+      # Entries are scoped to the PR's merge ref; clear them on close if
+      # the repository's 10 GB cache fills up.
       - uses: jdx/mr-boxington-action@v1
         with:
           cache-generation: android-v1
+          save-on-pull-request: true
       # Build scripts (ring's C compilation) need an Android C compiler;
       # the check below does no linking, so no linker configuration. The
       # runner image already ships the SDK's command-line tools; only the
