@@ -185,11 +185,15 @@ impl WinampState {
                 [bitmap.width as usize, bitmap.height as usize],
                 &bitmap.rgba,
             );
-            // Android fit-scales fractionally (PiP sizes are arbitrary),
-            // and fractional ratios wobble under NEAREST; LINEAR smooths
-            // them. Desktop keeps its integer NEAREST scaling.
+            // Android fit-scales fractionally (PiP sizes are arbitrary).
+            // Upscaling stays NEAREST so fullscreen keeps crisp pixels;
+            // only downscaling smooths. Desktop keeps full NEAREST.
             let options = if cfg!(target_os = "android") {
-                egui::TextureOptions::LINEAR
+                egui::TextureOptions {
+                    magnification: egui::TextureFilter::Nearest,
+                    minification: egui::TextureFilter::Linear,
+                    ..egui::TextureOptions::LINEAR
+                }
             } else {
                 egui::TextureOptions::NEAREST
             };
