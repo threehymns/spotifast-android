@@ -4,6 +4,7 @@ use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Ui, UiBuilder, Vec2,
     pos2, vec2,
 };
+use egui::scroll_area::{DragScroll, ScrollSource};
 
 use crate::api::models::*;
 use crate::app::App;
@@ -2360,6 +2361,28 @@ pub fn card(
     }
 }
 
+/// Touch-drag state for one [`shelf`].
+///
+/// A nested [`ScrollArea`](egui::ScrollArea) claims the whole touch drag
+/// for itself, so a finger starting on a shelf could only scroll it
+/// horizontally and never the page. The shelf therefore takes no drags of
+/// its own (see [`ScrollSource`]); the page keeps every gesture for
+/// vertical scrolling, and the shelf follows the finger's horizontal
+/// motion itself, without claiming anything.
+#[derive(Clone, Default)]
+struct ShelfTouch {
+    /// Horizontal offset to force this frame.
+    offset: f32,
+    /// Fling velocity in points per second, while nothing touches the screen.
+    vel: f32,
+    /// The shelf's inner rect last frame: the drag hitbox.
+    rect: Option<Rect>,
+    /// The content overflowed horizontally last frame.
+    overflows: bool,
+    /// A touch drag was in progress over the shelf last frame.
+    dragging: bool,
+}
+
 /// A horizontal shelf of cards with a title.
 pub fn shelf(
     ui: &mut Ui,
@@ -2371,17 +2394,74 @@ pub fn shelf(
     ui.add_space(8.0);
     theme::section_title(ui, palette, title);
     ui.add_space(4.0);
-    crate::autoscroll::show(
-        ui,
-        egui::ScrollArea::horizontal().id_salt(id),
-        egui::Vec2b::new(true, false),
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = CARD_GAP / 2.0;
-                add_contents(ui);
-            });
-        },
-    );
+    let touch_id = egui::Id::new(("shelf-touch", id));
+    let stored: Option<ShelfTouch> = ui.ctx().data(|data| data.get_temp(touch_id));
+    let first_frame = stored.is_none();
+    let mut touch = stored.unwrap_or_default();
+    // Pure `ui.input` math: no `interact`, so nothing here can steal the
+    // gesture from the page's own drag handling.
+    let (down, released, decidedly, touching, pos, delta, velocity) = ui.input(|input| {
+        (
+            input.pointer.primary_down(),
+            input.pointer.primary_released(),
+            input.pointer.is_decidedly_dragging(),
+            input.any_touches(),
+            input.pointer.interact_pos(),
+            input.pointer.delta(),
+            input.pointer.velocity(),
+        )
+    });
+    let over = pos.is_some_and(|pos| touch.rect.is_some_and(|rect| rect.contains(pos)));
+    if touching && down && decidedly && over && touch.overflows {
+        touch.offset -= delta.x;
+        touch.vel = 0.0;
+        touch.dragging = true;
+    } else {
+        if released && touch.dragging {
+            touch.vel = velocity.x;
+        }
+        touch.dragging = false;
+        if !down && touch.vel != 0.0 && touch.overflows {
+            // Kinetic scrolling, with egui's own constants.
+            let dt = ui.input(|input| input.stable_dt).min(0.1);
+            let stop_speed = 20.0;
+            let friction = 1000.0 * dt;
+            if friction > touch.vel.abs() || touch.vel.abs() < stop_speed {
+                touch.vel = 0.0;
+            } else {
+                touch.vel -= friction * touch.vel.signum();
+                touch.offset -= touch.vel * dt;
+                ui.ctx().request_repaint();
+            }
+        } else if down {
+            touch.vel = 0.0;
+        }
+    }
+    let area = egui::ScrollArea::horizontal().id_salt(id).scroll_source(ScrollSource {
+        drag: DragScroll::Never,
+        ..Default::default()
+    });
+    // On the first frame the offset is left to egui so a persisted scroll
+    // position is restored; afterwards the drag state above owns it.
+    let area = if first_frame {
+        area
+    } else {
+        area.horizontal_scroll_offset(touch.offset)
+    };
+    let output = crate::autoscroll::show(ui, area, egui::Vec2b::new(true, false), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = CARD_GAP / 2.0;
+            add_contents(ui);
+        });
+    });
+    // Wheel and scrollbar changes flow through the output back into next
+    // frame's forced offset, so they keep working unchanged.
+    touch.offset = output.state.offset.x;
+    touch.rect = Some(output.inner_rect);
+    touch.overflows = output.inner_rect.width().ceil() < output.content_size.x;
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(touch_id, touch);
+    });
     ui.add_space(12.0);
 }
 
