@@ -14,8 +14,10 @@
 //! in [`crate::auth::wait_for_code_with_redirect`].
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use jni::objects::{JObject, JString};
+use jni::Env;
+use jni::objects::{Global, JObject, JString, JValue, Reference};
 use winit::platform::android::activity::AndroidApp;
 
 use crate::paths::AppDirs;
@@ -70,7 +72,7 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
             env.call_method(
                 &activity,
                 jni::jni_str!("getIntent"),
-                jni::jni_sig!(() -> android.content.Intent),
+                jni::jni_sig!("()Landroid/content/Intent;"),
                 &[],
             )?
             .l()?;
@@ -78,7 +80,7 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
             env.call_method(
                 &intent,
                 jni::jni_str!("getDataString"),
-                jni::jni_sig!(() -> java.lang.String),
+                jni::jni_sig!("()Ljava/lang/String;"),
                 &[],
             )?
             .l()?;
@@ -103,11 +105,98 @@ pub fn finish_activity(app: &AndroidApp) {
         env.call_method(
             &activity,
             jni::jni_str!("finish"),
-            jni::jni_sig!(() -> void),
+            jni::jni_sig!("()V"),
             &[],
         )?;
         Ok(())
     }) {
         log::debug!("unable to finish the redirect catcher: {error}");
     }
+}
+
+/// The main activity, stashed once at startup so backend threads can reach
+/// Android APIs (the sign-in keepalive) without an activity handle.
+static KEEPALIVE_VM: OnceLock<jni::JavaVM> = OnceLock::new();
+static KEEPALIVE_ACTIVITY: OnceLock<Global<JObject<'static>>> = OnceLock::new();
+
+/// Stash the main activity for the sign-in keepalive. Call once from
+/// `android_main` after the redirect-catcher early return; further calls
+/// are ignored, so a catcher instance can never win the slot.
+pub fn init_keepalive(app: &AndroidApp) {
+    if KEEPALIVE_VM.get().is_some() {
+        return;
+    }
+    // SAFETY: both pointers are valid while `app` is alive, the closure
+    // runs attached, and the global ref outlives the process's need for
+    // it (the activity lives as long as the process here).
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = vm.attach_current_thread(|env| {
+        let local = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        env.new_global_ref(local)
+    });
+    match activity {
+        Ok(global) => {
+            let _ = KEEPALIVE_VM.set(vm);
+            let _ = KEEPALIVE_ACTIVITY.set(global);
+        }
+        Err(error) => log::debug!("unable to stash the main activity: {error}"),
+    }
+}
+
+/// Start the sign-in keepalive: a foreground service holding the process
+/// unfrozen while the browser is in front, so the loopback listener
+/// receives Spotify's redirect. Best-effort and idempotent; safe from any
+/// thread once [`init_keepalive`] ran.
+pub fn start_keepalive() {
+    let (Some(vm), Some(activity)) = (KEEPALIVE_VM.get(), KEEPALIVE_ACTIVITY.get()) else {
+        return;
+    };
+    if let Err(error) = vm.attach_current_thread(|env| {
+        let intent = keepalive_intent(env, activity.as_obj())?;
+        env.call_method(
+            activity.as_obj(),
+            jni::jni_str!("startForegroundService"),
+            jni::jni_sig!("(Landroid/content/Intent;)Landroid/content/ComponentName;"),
+            &[JValue::from(&intent)],
+        )?;
+        Ok(())
+    }) {
+        log::debug!("unable to start the sign-in keepalive: {error}");
+    }
+}
+
+/// Stop the sign-in keepalive once the flow resolved. Best-effort.
+pub fn stop_keepalive() {
+    let (Some(vm), Some(activity)) = (KEEPALIVE_VM.get(), KEEPALIVE_ACTIVITY.get()) else {
+        return;
+    };
+    if let Err(error) = vm.attach_current_thread(|env| {
+        let intent = keepalive_intent(env, activity.as_obj())?;
+        env.call_method(
+            activity.as_obj(),
+            jni::jni_str!("stopService"),
+            jni::jni_sig!("(Landroid/content/Intent;)Z"),
+            &[JValue::from(&intent)],
+        )?;
+        Ok(())
+    }) {
+        log::debug!("unable to stop the sign-in keepalive: {error}");
+    }
+}
+
+/// `new Intent(activity, AuthKeepaliveService.class)`.
+fn keepalive_intent<'env>(
+    env: &mut Env<'env>,
+    activity: &JObject,
+) -> jni::errors::Result<JObject<'env>> {
+    let name = jni::jni_str!("rocks/spotifast/spotifast/AuthKeepaliveService");
+    let service = env.find_class(name)?;
+    // SAFETY: re-wraps the local ref above without taking ownership; the
+    // class outlives this call and `JObject` never frees.
+    let service = unsafe { JObject::from_raw(env, service.as_raw()) };
+    Ok(env.new_object(
+        jni::jni_str!("android/content/Intent"),
+        jni::jni_sig!("(Landroid/content/Context;Ljava/lang/Class;)V"),
+        &[JValue::from(activity), JValue::from(&service)],
+    )?)
 }

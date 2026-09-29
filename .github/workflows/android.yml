@@ -83,16 +83,23 @@ jobs:
           echo "CLIPPY_STATUS=$status" >> "$GITHUB_ENV"
           exit "$status"
       # Building xbuild takes minutes; the binary is cached by revision and
-      # the install skipped on a hit.
+      # the install skipped on a hit. The key also covers our manifest
+      # patch (services support), applied below before installing.
       - name: Cache xbuild
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/x
-          key: xbuild-${{ env.XBUILD_REV }}
+          key: xbuild-${{ env.XBUILD_REV }}-${{ hashFiles('tools/xbuild-services.patch') }}
       - name: Install xbuild
         run: |
           if ! command -v x >/dev/null; then
-            cargo install --git https://github.com/rust-mobile/xbuild --rev "$XBUILD_REV" xbuild
+            rm -rf "$RUNNER_TEMP/xbuild"
+            git init -q "$RUNNER_TEMP/xbuild"
+            git -C "$RUNNER_TEMP/xbuild" remote add origin https://github.com/rust-mobile/xbuild.git
+            git -C "$RUNNER_TEMP/xbuild" fetch -q --depth 1 origin "$XBUILD_REV"
+            git -C "$RUNNER_TEMP/xbuild" checkout -q FETCH_HEAD
+            git -C "$RUNNER_TEMP/xbuild" apply "$GITHUB_WORKSPACE/tools/xbuild-services.patch"
+            cargo install --path "$RUNNER_TEMP/xbuild/xbuild"
           fi
           x --version
       # Without a signing key the APK carries xbuild's debug signature:
@@ -110,11 +117,56 @@ jobs:
           status="${PIPESTATUS[0]}"
           echo "XBUILD_STATUS=$status" >> "$GITHUB_ENV"
           exit "$status"
+      # The debug signing identity must survive across runs, or every APK
+      # needs an uninstall first. (Release PEM builds don't use it.)
+      - name: Cache debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+      # The sign-in keepalive is Java, and xbuild is Rust-only: compile the
+      # service, add its classes.dex to the APK in place, then realign and
+      # re-sign with the same identity xbuild used (debug keystore above,
+      # or the release PEM). Debug identity differs from xbuild's own, so
+      # installs over older APKs need one uninstall first.
+      - name: Merge keepalive DEX
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
+          JAR="$(ls -d "$SDK"/platforms/android-* | sort -t- -k2 -n | tail -1)/android.jar"
+          command -v javac zip
+          KEEP="$RUNNER_TEMP/keepalive"
+          rm -rf "$KEEP" && mkdir -p "$KEEP/classes"
+          javac -source 8 -target 8 -nowarn -cp "$JAR" -d "$KEEP/classes" android/AuthKeepaliveService.java
+          APK=(target/x/release/android/*.apk)
+          APK_ABS="$GITHUB_WORKSPACE/${APK[0]}"
+          if unzip -l "$APK_ABS" | grep -q 'classes\.dex'; then
+            mkdir -p "$KEEP/orig" && (cd "$KEEP/orig" && unzip -o -q "$APK_ABS" classes.dex)
+            "$BT/d8" --release --min-api 26 --output "$KEEP/merged" "$KEEP/orig/classes.dex" "$KEEP/classes/rocks/spotifast/spotifast/AuthKeepaliveService.class"
+          else
+            "$BT/d8" --release --min-api 26 --output "$KEEP/merged" "$KEEP/classes/rocks/spotifast/spotifast/AuthKeepaliveService.class"
+          fi
+          (cd "$KEEP/merged" && zip -g -q "$APK_ABS" classes.dex)
+          "$BT/zipalign" -f 4 "$APK_ABS" "$KEEP/aligned.apk" && mv "$KEEP/aligned.apk" "$APK_ABS"
+          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
+            openssl pkcs12 -export -in "$RUNNER_TEMP/signing.pem" -out "$KEEP/signing.p12" -passout pass:spotifast -name spotifast
+            "$BT/apksigner" sign --ks "$KEEP/signing.p12" --ks-pass:pass:spotifast --ks-key-alias spotifast "$APK_ABS"
+          else
+            KS=~/.android/debug.keystore
+            [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10950 -dname "CN=Android Debug,O=Android,C=US"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass:pass:android --ks-key-alias androiddebugkey --key-pass:pass:android "$APK_ABS"
+          fi
+          "$BT/apksigner" verify "$APK_ABS" && echo "signature OK"
       - name: Inspect APK
         run: |
           apk=(target/x/release/android/*.apk)
           unzip -l "${apk[0]}" | tee "$RUNNER_TEMP/apk-contents.txt"
           grep -q 'lib/arm64-v8a/libspotifast\.so' "$RUNNER_TEMP/apk-contents.txt"
+          grep -qF 'classes.dex' "$RUNNER_TEMP/apk-contents.txt"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
+          "$BT/aapt" dump xmltree "${apk[0]}" AndroidManifest.xml | grep -q 'AuthKeepaliveService'
           ls -la "${apk[0]}"
       - name: Upload APK
         uses: actions/upload-artifact@v4

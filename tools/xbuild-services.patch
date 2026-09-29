@@ -1,0 +1,26 @@
+diff --git a/apk/src/manifest.rs b/apk/src/manifest.rs
+index c1e4ffd..ab4ce02 100644
+--- a/apk/src/manifest.rs
++++ b/apk/src/manifest.rs
+@@ -82,6 +82,21 @@ pub struct Application {
+     #[serde(rename(serialize = "activity"))]
+     #[serde(default)]
+     pub activities: Vec<Activity>,
++    #[serde(rename(serialize = "service"))]
++    #[serde(default)]
++    pub services: Vec<Service>,
++}
++
++/// Android [service element](https://developer.android.com/guide/topics/manifest/service-element).
++#[derive(Clone, Debug, Default, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct Service {
++    #[serde(rename(serialize = "android:name"))]
++    pub name: String,
++    #[serde(rename(serialize = "android:exported"))]
++    pub exported: Option<bool>,
++    #[serde(rename(serialize = "android:foregroundServiceType"))]
++    pub foreground_service_type: Option<String>,
+ }
+ 
+ /// Android [activity element](https://developer.android.com/guide/topics/manifest/activity-element).

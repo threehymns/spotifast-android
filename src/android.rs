@@ -52,6 +52,10 @@ pub extern "C" fn android_main(app: AndroidApp) {
         return;
     }
     crate::auth_android::clear_redirect(&dirs);
+    // Stash the main activity for the sign-in keepalive (started/stopped
+    // from backend threads). After the catcher return above, so a catcher
+    // instance never wins the slot.
+    crate::auth_android::init_keepalive(&app);
     let dirs_ready = dirs.ensure();
     if let Err(error) = dirs_ready {
         log::warn!("unable to create the application directories: {error}");

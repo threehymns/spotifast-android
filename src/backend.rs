@@ -2397,6 +2397,10 @@ impl Worker {
         crate::auth_android::clear_redirect(&self.dirs);
         let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
         self.auth_redirect_tx = Some(redirect_tx);
+        // Hold the process unfrozen while the browser is in front so the
+        // loopback listener below can receive Spotify's redirect.
+        #[cfg(target_os = "android")]
+        crate::auth_android::start_keepalive();
         self.authorizing_source = Some(source);
         self.api.set_state(source, SessionState::Authorizing);
         if source == ApiSource::Shared {
@@ -2434,6 +2438,8 @@ impl Worker {
                 crate::auth::StoredToken::from_response(&grant.client_id, response, None)
             }
             .await;
+            #[cfg(target_os = "android")]
+            crate::auth_android::stop_keepalive();
             match result {
                 Ok(token) => {
                     let _ = commands.send(Command::WebSignedIn {
@@ -2678,6 +2684,10 @@ impl Worker {
         crate::auth_android::clear_redirect(&self.dirs);
         let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
         self.auth_redirect_tx = Some(redirect_tx);
+        // Hold the process unfrozen while the browser is in front so the
+        // loopback listener below can receive Spotify's redirect.
+        #[cfg(target_os = "android")]
+        crate::auth_android::start_keepalive();
         self.emit(Event::Playback(LocalPlayback::Authorizing));
         // Android has no desktop opener; nothing opens the playback
         // grant there (its URL has no waiting screen yet).
@@ -2708,6 +2718,8 @@ impl Worker {
                 crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await
             }
             .await;
+            #[cfg(target_os = "android")]
+            crate::auth_android::stop_keepalive();
             match result {
                 Ok(token) => {
                     let _ = commands.send(Command::PlaybackAuthorized {

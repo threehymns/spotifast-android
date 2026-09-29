@@ -17,8 +17,12 @@ android:
     uses_permission:
       - {name: android.permission.INTERNET}
       - {name: android.permission.ACCESS_NETWORK_STATE}
+      - {name: android.permission.FOREGROUND_SERVICE}
     application:
       label: Spotifast
+      # The APK carries DEX now (the sign-in keepalive service below), so
+      # say so explicitly rather than relying on the default.
+      has_code: true
       # One activity: xbuild fills in NativeActivity, singleTop, and the
       # MAIN/LAUNCHER filter. The VIEW filter below catches the OAuth
       # custom-scheme redirect as a second instance while the first is
@@ -32,3 +36,10 @@ android:
               data:
                 - scheme: rocks.spotifast.spotifast
                   host: callback
+      services:
+        # The sign-in keepalive (android/AuthKeepaliveService.java): a
+        # foreground service that holds the process unfrozen while the
+        # browser is in front. Needs the xbuild services patch
+        # (tools/xbuild-services.patch, applied in CI).
+        - name: rocks.spotifast.spotifast.AuthKeepaliveService
+          exported: false
