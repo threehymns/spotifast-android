@@ -1,7 +1,7 @@
 # xbuild packaging for the Android APK (.github/workflows/android.yml).
 # Everything unset here falls back to xbuild's defaults: version 0.11.0 from
-# Cargo.toml, SDK target/compile 33 with min 21, a NativeActivity launcher
-# pointing at this library, and non-debuggable release builds.
+# Cargo.toml, SDK target/compile 33 with min 26 below, a NativeActivity
+# launcher pointing at this library, and non-debuggable release builds.
 
 android:
   # Launcher icon, scaled to every density. The macOS .icns source without
@@ -9,6 +9,11 @@ android:
   icon: packaging/macos/icon-1024.png
   manifest:
     package: rocks.spotifast.Spotifast
+    # cpal plays through AAudio, which arrived in API 26; xbuild also
+    # resolves the NDK platform stubs from this, and android-21 ships no
+    # libaaudio.so.
+    sdk:
+      min_sdk_version: 26
     uses_permission:
       - {name: android.permission.INTERNET}
       - {name: android.permission.ACCESS_NETWORK_STATE}
