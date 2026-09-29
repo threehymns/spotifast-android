@@ -151,12 +151,12 @@ jobs:
           "$BT/zipalign" -f 4 "$APK_ABS" "$KEEP/aligned.apk" && mv "$KEEP/aligned.apk" "$APK_ABS"
           if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
             openssl pkcs12 -export -in "$RUNNER_TEMP/signing.pem" -out "$KEEP/signing.p12" -passout pass:spotifast -name spotifast
-            "$BT/apksigner" sign --ks "$KEEP/signing.p12" --ks-pass:pass:spotifast --ks-key-alias spotifast "$APK_ABS"
+            "$BT/apksigner" sign --ks "$KEEP/signing.p12" --ks-pass pass:spotifast --ks-key-alias spotifast "$APK_ABS"
           else
             KS=~/.android/debug.keystore
             mkdir -p "$(dirname "$KS")"
             [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10950 -dname "CN=Android Debug,O=Android,C=US"
-            "$BT/apksigner" sign --ks "$KS" --ks-pass:pass:android --ks-key-alias androiddebugkey --key-pass:pass:android "$APK_ABS"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android "$APK_ABS"
           fi
           "$BT/apksigner" verify "$APK_ABS" && echo "signature OK"
       - name: Inspect APK
