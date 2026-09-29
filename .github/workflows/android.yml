@@ -49,11 +49,21 @@ jobs:
       # NDK itself is installed.
       - name: Install Android NDK
         run: |
+          set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "ndk;27.0.12077973" 2>&1 | tail -3
+          # The NDK download is large and flakes; retry it, and fail here
+          # (pipefail) instead of handing clippy a missing compiler.
+          for attempt in 1 2 3; do
+            if sdkmanager --install "ndk;27.0.12077973" 2>&1 | tail -3; then
+              break
+            fi
+            echo "sdkmanager install failed (attempt $attempt of 3)"
+            sleep 15
+          done
           NDK="$SDK/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$NDK/aarch64-linux-android24-clang"
           echo "$NDK" >> "$GITHUB_PATH"
           echo "CC_aarch64_linux_android=$NDK/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
           "$NDK/aarch64-linux-android24-clang" --version | head -1
