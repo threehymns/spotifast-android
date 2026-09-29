@@ -100,63 +100,67 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                             if theme::link(ui, gettext(locale, "Didn't open? Open the sign-in page again"), theme::regular(13.0), palette.secondary).clicked() {
                                 ctx.open_url(egui::OpenUrl::new_tab(url));
                             }
-                            ui.add_space(6.0);
-                            theme::text(
-                                ui,
-                                gettext(locale, "Approved, but still waiting? Paste the address:"),
-                                theme::regular(13.0),
-                                palette.secondary,
-                            );
-                            let paste_id = egui::Id::new("login-pasted-url");
-                            let mut pasted = ctx
-                                .data(|data| data.get_temp::<String>(paste_id))
-                                .unwrap_or_default();
-                            Frame::new()
-                                .fill(palette.surface)
-                                .corner_radius(CornerRadius::same(6))
-                                .inner_margin(Margin::symmetric(10, 6))
-                                .show(ui, |ui| {
-                                    let _ = super::widgets::text_edit(
-                                        ui,
-                                        locale,
-                                        egui::TextEdit::singleline(&mut pasted)
-                                            .id(paste_id)
-                                            .hint_text(
-                                                egui::RichText::new("http://127.0.0.1:…")
-                                                    .color(palette.dim),
-                                            )
-                                            .font(theme::regular(13.0))
-                                            .frame(egui::Frame::NONE)
-                                            .desired_width(f32::INFINITY),
-                                    );
-                                });
-                            ctx.data_mut(|data| data.insert_temp(paste_id, pasted.clone()));
-                            // Neither egui's Paste menu nor Gboard can
-                            // reach a text field on Android (no OS
-                            // clipboard in egui-winit, no text events
-                            // from winit), so the field gets its own
-                            // paste button there.
+                            // Paste fallback for when the loopback listener is
+                            // unreachable (Android freezes under the browser).
+                            // Desktop keeps the waiting screen as it was.
                             #[cfg(target_os = "android")]
-                            let paste = theme::pill_button(
-                                ui,
-                                &palette,
-                                &gettext(locale, "Paste"),
-                                false,
-                            );
-                            #[cfg(target_os = "android")]
-                            if paste.clicked() {
-                                pasted = crate::auth_android::read_clipboard_text()
-                                    .unwrap_or(pasted);
+                            {
+                                ui.add_space(6.0);
+                                theme::text(
+                                    ui,
+                                    gettext(locale, "Approved, but still waiting? Paste the address:"),
+                                    theme::regular(13.0),
+                                    palette.secondary,
+                                );
+                                let paste_id = egui::Id::new("login-pasted-url");
+                                let mut pasted = ctx
+                                    .data(|data| data.get_temp::<String>(paste_id))
+                                    .unwrap_or_default();
+                                Frame::new()
+                                    .fill(palette.surface)
+                                    .corner_radius(CornerRadius::same(6))
+                                    .inner_margin(Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        let _ = super::widgets::text_edit(
+                                            ui,
+                                            locale,
+                                            egui::TextEdit::singleline(&mut pasted)
+                                                .id(paste_id)
+                                                .hint_text(
+                                                    egui::RichText::new("http://127.0.0.1:…")
+                                                        .color(palette.dim),
+                                                )
+                                                .font(theme::regular(13.0))
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(f32::INFINITY),
+                                        );
+                                    });
                                 ctx.data_mut(|data| data.insert_temp(paste_id, pasted.clone()));
-                            }
-                            let response = theme::pill_button(
-                                ui,
-                                &palette,
-                                &gettext(locale, "Complete sign-in"),
-                                false,
-                            );
-                            if response.clicked() && !pasted.trim().is_empty() {
-                                app.actions.push(Action::SubmitPastedRedirect { url: pasted });
+                                // Neither egui's Paste menu nor Gboard can
+                                // reach a text field on Android (no OS
+                                // clipboard in egui-winit, no text events
+                                // from winit), so the field gets its own
+                                // paste button there.
+                                let paste = theme::pill_button(
+                                    ui,
+                                    &palette,
+                                    &gettext(locale, "Paste"),
+                                    false,
+                                );
+                                if paste.clicked() {
+                                    pasted = crate::auth_android::read_clipboard_text()
+                                        .unwrap_or(pasted);
+                                    ctx.data_mut(|data| data.insert_temp(paste_id, pasted.clone()));
+                                }
+                                let response = theme::pill_button(
+                                    ui,
+                                    &palette,
+                                    &gettext(locale, "Complete sign-in"),
+                                    false,
+                                );
+                                if response.clicked() && !pasted.trim().is_empty() {
+                                    app.actions.push(Action::SubmitPastedRedirect { url: pasted });
+                                }
                             }
                             ui.add_space(14.0);
                             if theme::pill_button(ui, &palette, &gettext(locale, "Cancel"), false).clicked() {
