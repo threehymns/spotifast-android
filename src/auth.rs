@@ -215,13 +215,12 @@ pub async fn wait_for_code(
     }
 }
 
-/// Android: race the loopback listener (split-screen keeps the app alive)
-/// against a VIEW-intent redirect stashed while frozen (see
-/// `crate::auth_android`). Cancellation and the ten-minute timeout ride
-/// along with the loopback half: whichever half finishes first wins, and
-/// the other future is dropped.
-#[cfg(target_os = "android")]
-pub async fn wait_for_code_android(
+/// Race the loopback listener against an out-of-band redirect: on Android
+/// a VIEW-intent URI stashed while frozen (see `crate::auth_android`), on
+/// every platform a URL the user pasted from the browser. Cancellation
+/// and the ten-minute timeout ride along with the loopback half:
+/// whichever half finishes first wins, and the other future is dropped.
+pub async fn wait_for_code_with_redirect(
     port: u16,
     expected_state: &str,
     mut redirect: tokio::sync::oneshot::Receiver<String>,
@@ -229,7 +228,7 @@ pub async fn wait_for_code_android(
 ) -> Result<String> {
     tokio::select! {
         code = wait_for_code(port, expected_state, cancel) => code,
-        uri = &mut redirect => parse_view_intent(
+        uri = &mut redirect => parse_manual_redirect(
             &uri.map_err(|_| anyhow!("sign-in interrupted; try again"))?,
             expected_state,
         ),
@@ -256,6 +255,33 @@ pub fn parse_view_intent(uri: &str, expected_state: &str) -> Result<String> {
         .and_then(|rest| rest.strip_prefix('?'))
         .ok_or_else(|| anyhow!("not a Spotifast authorization redirect"))?;
     parse_redirect_query(query, expected_state)
+}
+
+/// Parse a redirect URL the user pasted from the browser's address bar,
+/// for when the loopback listener is unreachable (Android is frozen under
+/// the browser, or no browser came back on desktop). Accepts the same
+/// `http://127.0.0.1:{port}/login?...` URLs the listener would have served;
+/// the state check still binds the code to the pending flow.
+pub fn parse_pasted_redirect(url: &str, expected_state: &str) -> Result<String> {
+    let rest = url
+        .trim()
+        .strip_prefix("http://127.0.0.1")
+        .ok_or_else(|| anyhow!("paste the Spotify sign-in address from the browser"))?;
+    let (_, query) = rest
+        .split_once("/login?")
+        .ok_or_else(|| anyhow!("that is not a Spotify sign-in address"))?;
+    parse_redirect_query(query, expected_state)
+}
+
+/// Parse a redirect that arrived out-of-band: either the Android custom
+/// scheme (a second activity instance caught it while frozen) or a
+/// loopback URL the user pasted.
+fn parse_manual_redirect(url: &str, expected_state: &str) -> Result<String> {
+    if url.trim().starts_with(ANDROID_REDIRECT_URI) {
+        parse_view_intent(url.trim(), expected_state)
+    } else {
+        parse_pasted_redirect(url, expected_state)
+    }
 }
 
 fn parse_redirect_query(query: &str, expected_state: &str) -> Result<String> {
@@ -688,5 +714,25 @@ mod tests {
         assert!(parse_view_intent(&uri, "s").is_err());
         let uri = format!("{ANDROID_REDIRECT_URI}?error=access_denied&state=s");
         assert!(parse_view_intent(&uri, "s").is_err());
+    }
+
+    #[test]
+    fn pasted_loopback_urls_yield_the_code() {
+        let uri = "http://127.0.0.1:8989/login?code=auth-code&state=state-1";
+        assert_eq!(parse_pasted_redirect(uri, "state-1").unwrap(), "auth-code");
+        assert_eq!(
+            parse_manual_redirect("rocks.spotifast.spotifast://callback?code=c&state=s", "s")
+                .unwrap(),
+            "c"
+        );
+    }
+
+    #[test]
+    fn pasted_urls_reject_the_wrong_host_path_or_state() {
+        assert!(parse_pasted_redirect("http://127.0.0.2:8989/login?code=c&state=s", "s").is_err());
+        assert!(parse_pasted_redirect("http://127.0.0.1:8989/other?code=c&state=s", "s").is_err());
+        let uri = "http://127.0.0.1:8989/login?code=c&state=wrong";
+        assert!(parse_pasted_redirect(uri, "s").is_err());
+        assert!(parse_pasted_redirect("  http://127.0.0.1:8989/login?code=c&state=s\n", "s").is_ok());
     }
 }

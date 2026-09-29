@@ -8840,6 +8840,9 @@ impl App {
                 self.sign_in_url = None;
                 self.auth = AuthStatus::SignedOut;
             }
+            Action::SubmitPastedRedirect { url } => {
+                self.backend.send(Command::SubmitPastedRedirect { url });
+            }
             Action::ConfigurePersonalWebApp => {
                 self.save_settings();
                 self.backend.send(Command::ConfigurePersonalWebApp(

@@ -11,7 +11,7 @@
 //! instance picks the file up on its next frame while a sign-in is pending
 //! (see `Command::CheckAuthRedirect`). Split-screen keeps the app visible,
 //! so the loopback listener covers that case on its own; both halves race
-//! in [`crate::auth::wait_for_code_android`].
+//! in [`crate::auth::wait_for_code_with_redirect`].
 
 use std::path::PathBuf;
 
