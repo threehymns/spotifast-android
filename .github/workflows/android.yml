@@ -8,10 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  # TEMPORARY (debug): write is for the lockfile refresh commit and the
-  # diagnostics comment. Revert to contents: read before merging.
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -58,34 +55,11 @@ jobs:
           echo "$NDK" >> "$GITHUB_PATH"
           echo "CC_aarch64_linux_android=$NDK/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
           "$NDK/aarch64-linux-android24-clang" --version | head -1
-      # TEMPORARY (debug): the lockfile is missing 15 wgpu-tree packages
-      # (pre-existing staleness); regenerate it for this job and commit it
-      # to the branch. Delete the step before merging (keep Cargo.lock).
-      - name: Refresh lockfile (temporary)
-        if: github.event.pull_request.number
-        run: |
-          cp Cargo.lock /tmp/Cargo.lock.orig
-          cargo update -w > /tmp/update-w.log 2>&1
-          tail -5 /tmp/update-w.log
-          if git diff --quiet -- Cargo.lock; then
-            echo "lockfile already fresh"
-          else
-            cp Cargo.lock /tmp/Cargo.lock.new
-            git fetch origin "${{ github.head_ref }}:${{ github.head_ref }}" --depth 1
-            git checkout "${{ github.head_ref }}"
-            cp /tmp/Cargo.lock.new Cargo.lock
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -am "Regenerate Cargo.lock (add 15 missing wgpu-tree packages)"
-            git push origin "${{ github.head_ref }}"
-          fi
       # The fast signal: the same library xbuild compiles, before the slow
       # release build below. MilkDrop stays off: its C++ build has no
       # Android toolchain wiring.
       - name: Clippy (aarch64-linux-android)
-        run: |
-          mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings 2>&1 | tee /tmp/clippy.log
-          status="${PIPESTATUS[0]}"
-          echo "CLIPPY_STATUS=$status" >> "$GITHUB_ENV"
-          exit "$status"
+        run: mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings
       # Building xbuild takes minutes; the binary is cached by revision and
       # the install skipped on a hit. The key also covers our manifest
       # patch (services support), applied below before installing.
@@ -117,10 +91,7 @@ jobs:
             echo "${{ secrets.ANDROID_SIGNING_PEM }}" > "$RUNNER_TEMP/signing.pem"
             args+=(--pem "$RUNNER_TEMP/signing.pem")
           fi
-          x build "${args[@]}" 2>&1 | tee /tmp/xbuild.log
-          status="${PIPESTATUS[0]}"
-          echo "XBUILD_STATUS=$status" >> "$GITHUB_ENV"
-          exit "$status"
+          x build "${args[@]}"
       # The debug signing identity must survive across runs, or every APK
       # needs an uninstall first. (Release PEM builds don't use it.)
       - name: Cache debug keystore
@@ -178,65 +149,3 @@ jobs:
         with:
           name: spotifast-android-arm64
           path: target/x/release/android/*.apk
-      # TEMPORARY (debug): report the fmt diff, the clippy and xbuild
-      # errors, and a desktop lib-test probe as a PR comment. Runs last so
-      # every log above exists. Delete before merging.
-      - name: Report diagnostics (temporary)
-        if: always() && github.event.pull_request.number
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Must-post: never die before the gh comment, whatever failed above.
-          set +e
-          rustup component add rustfmt
-          fault=0
-          cargo fmt --all --check > /tmp/fmt.log 2>&1 || fault=1
-          [ "${CLIPPY_STATUS:-1}" != "0" ] && fault=1
-          [ "${XBUILD_STATUS:-1}" != "0" ] && fault=1
-          ls target/x/release/android/*.apk >/dev/null 2>&1 || fault=1
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libpulse-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libclang-dev
-          mbx test --locked --lib --no-default-features > /tmp/host-test.log 2>&1 || fault=1
-          diff /tmp/Cargo.lock.orig Cargo.lock > /tmp/lock-diff.log 2>&1 || true
-          if [ "$fault" = "0" ]; then exit 0; fi
-          {
-            echo '## diagnostics (temporary debug step)'
-            echo
-            echo '### fmt'
-            echo '```diff'
-            head -250 /tmp/fmt.log 2>/dev/null || echo '(no fmt log)'
-            echo '```'
-            echo
-            echo '### android clippy (tail)'
-            echo '```'
-            tail -120 /tmp/clippy.log 2>/dev/null || echo '(no clippy log: step skipped)'
-            echo '```'
-            echo
-            echo '### xbuild release APK (tail)'
-            echo '```'
-            tail -150 /tmp/xbuild.log 2>/dev/null || echo '(no xbuild log: step skipped)'
-            echo '```'
-            echo
-            echo '### NDK state'
-            echo '```'
-            echo "CC_aarch64_linux_android=${CC_aarch64_linux_android:-<unset>}"
-            ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null || echo '(no $ANDROID_HOME/ndk/*)'
-            command -v aarch64-linux-android24-clang 2>/dev/null || echo '(clang not on PATH)'
-            echo '```'
-            echo
-            echo '### desktop lib tests (tail)'
-            echo '```'
-            tail -20 /tmp/host-test.log 2>/dev/null || echo '(no host-test log)'
-            echo '```'
-            echo
-            echo '### cargo update -w'
-            echo '```'
-            tail -20 /tmp/update-w.log 2>/dev/null || echo '(no update-w log: refresh skipped or failed)'
-            echo '```'
-            echo
-            echo '### Cargo.lock delta (truncated at 150 lines)'
-            echo '```diff'
-            head -150 /tmp/lock-diff.log 2>/dev/null || echo '(no lock-diff log)'
-            echo '```'
-          } > /tmp/diag.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/diag.md
