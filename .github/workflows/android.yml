@@ -88,7 +88,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/x
-          key: xbuild-${{ env.XBUILD_REV }}-${{ hashFiles('tools/xbuild-services.patch') }}
+          key: xbuild-${{ env.XBUILD_REV }}-${{ hashFiles('packaging/android/xbuild-services.patch') }}
       - name: Install xbuild
         run: |
           if ! command -v x >/dev/null; then
@@ -97,7 +97,7 @@ jobs:
             git -C "$RUNNER_TEMP/xbuild" remote add origin https://github.com/rust-mobile/xbuild.git
             git -C "$RUNNER_TEMP/xbuild" fetch -q --depth 1 origin "$XBUILD_REV"
             git -C "$RUNNER_TEMP/xbuild" checkout -q FETCH_HEAD
-            git -C "$RUNNER_TEMP/xbuild" apply "$GITHUB_WORKSPACE/tools/xbuild-services.patch"
+            git -C "$RUNNER_TEMP/xbuild" apply "$GITHUB_WORKSPACE/packaging/android/xbuild-services.patch"
             cargo install --path "$RUNNER_TEMP/xbuild/xbuild"
           fi
           x --version

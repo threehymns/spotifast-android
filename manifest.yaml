@@ -40,6 +40,6 @@ android:
         # The sign-in keepalive (android/AuthKeepaliveService.java): a
         # foreground service that holds the process unfrozen while the
         # browser is in front. Needs the xbuild services patch
-        # (tools/xbuild-services.patch, applied in CI).
+        # (packaging/android/xbuild-services.patch, applied in CI).
         - name: rocks.spotifast.spotifast.AuthKeepaliveService
           exported: false
