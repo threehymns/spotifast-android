@@ -32,7 +32,9 @@ pub fn redirect_path(dirs: &AppDirs) -> PathBuf {
 /// Atomically stash a caught redirect URI for the main instance.
 pub fn stash_redirect(dirs: &AppDirs, uri: &str) {
     let path = redirect_path(dirs);
-    if let Some(parent) = path.parent() && std::fs::create_dir_all(parent).is_err() {
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
         log::warn!("unable to create the redirect handoff directory");
         return;
     }
@@ -64,28 +66,28 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
     // SAFETY: both pointers are valid while `app` is alive, the closure
     // runs attached, and the borrowed activity reference is never freed.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    let caught: jni::errors::Result<Option<String>> = vm.attach_current_thread(
-        |env| -> jni::errors::Result<Option<String>> {
-        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
-        let intent = env
-            .call_method(
-                &activity,
-                jni::jni_str!("getIntent"),
-                jni::jni_sig!("()Landroid/content/Intent;"),
-                &[],
-            )?
-            .l()?;
-        let data = env
-            .call_method(
-                &intent,
-                jni::jni_str!("getDataString"),
-                jni::jni_sig!("()Ljava/lang/String;"),
-                &[],
-            )?
-            .l()?;
-        let data: JString = env.cast_local::<JString>(data)?;
-        Ok(Some(data.try_to_string(env)?))
-    });
+    let caught: jni::errors::Result<Option<String>> =
+        vm.attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+            let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+            let intent = env
+                .call_method(
+                    &activity,
+                    jni::jni_str!("getIntent"),
+                    jni::jni_sig!("()Landroid/content/Intent;"),
+                    &[],
+                )?
+                .l()?;
+            let data = env
+                .call_method(
+                    &intent,
+                    jni::jni_str!("getDataString"),
+                    jni::jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let data: JString = env.cast_local::<JString>(data)?;
+            Ok(Some(data.try_to_string(env)?))
+        });
     match caught {
         Ok(uri) => uri,
         Err(error) => {

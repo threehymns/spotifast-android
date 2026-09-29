@@ -311,10 +311,7 @@ impl ProtectedStore for FileStore {
         #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
         #[cfg(unix)]
-        let _ = std::fs::set_permissions(
-            &temporary,
-            std::fs::Permissions::from_mode(0o600),
-        );
+        let _ = std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600));
         crate::util::replace_file(&temporary, &path).map_err(|_| Error::Filesystem)
     }
 
@@ -1371,10 +1368,7 @@ mod tests {
     }
 
     fn file_store_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "spotifast-filestore-{name}-{}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("spotifast-filestore-{name}-{}", std::process::id()))
     }
 
     fn file_store_at(dir: &std::path::Path) -> FileStore {
