@@ -85,7 +85,7 @@ pub fn launch_intent_data(app: &AndroidApp) -> Option<String> {
                 &[],
             )?
             .l()?;
-        let data: JString = env.cast_local(data)?;
+        let data: JString = env.cast_local::<JString>(data)?;
         Ok(Some(data.try_to_string(env)?))
     });
     match caught {
