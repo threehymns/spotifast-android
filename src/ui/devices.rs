@@ -52,7 +52,8 @@ fn enable_playback_row(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let authorizing = matches!(
         app.local_playback,
-        crate::backend::LocalPlayback::Authorizing | crate::backend::LocalPlayback::Connecting
+        crate::backend::LocalPlayback::Authorizing { .. }
+            | crate::backend::LocalPlayback::Connecting
     );
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
     if response.hovered() && !authorizing {
@@ -106,6 +107,27 @@ fn enable_playback_row(app: &mut App, ui: &mut egui::Ui) {
         egui::Stroke::new(1.0, palette.outline),
     );
     ui.add_space(4.0);
+    // Android has no desktop opener, so the backend skips auto-open
+    // there; the device list opens the browser itself, once per
+    // grant URL, with a fallback link like the sign-in screen.
+    #[cfg(target_os = "android")]
+    if let crate::backend::LocalPlayback::Authorizing { url } = &app.local_playback {
+        let opened_id = egui::Id::new("playback-browser-opened");
+        let opened = ui.ctx().data(|data| data.get_temp::<String>(opened_id));
+        if opened.as_deref() != Some(url.as_str()) {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
+            ui.ctx().data_mut(|data| data.insert_temp(opened_id, url.clone()));
+        }
+        let reopen = theme::link(
+            ui,
+            gettext(app.locale, "Didn't open? Open the sign-in page again"),
+            theme::regular(13.0),
+            palette.secondary,
+        );
+        if reopen.clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
+        }
+    }
 }
 
 /// A receiver announced on the local network but not yet in the account.

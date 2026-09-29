@@ -354,7 +354,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             gettext(locale, "This computer is a Spotify Connect device."),
             None,
         ),
-        crate::backend::LocalPlayback::Authorizing => (
+        crate::backend::LocalPlayback::Authorizing { .. } => (
             pgettext(locale, "playback status", "Setting up"),
             gettext(locale, "Finish authorizing in your browser."),
             None,

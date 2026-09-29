@@ -862,8 +862,11 @@ pub enum Event {
 pub enum LocalPlayback {
     /// Not authorized; local playback is unavailable but the app still works.
     Unavailable,
-    /// The browser is open for the playback grant.
-    Authorizing,
+    /// The browser is open for the playback grant; the URL lets
+    /// platforms without a desktop opener show it themselves.
+    Authorizing {
+        url: String,
+    },
     /// Connecting the librespot engine.
     Connecting,
     /// This computer is a ready Spotify Connect device.
@@ -2690,9 +2693,11 @@ impl Worker {
         // loopback listener below can receive Spotify's redirect.
         #[cfg(target_os = "android")]
         crate::auth_android::start_keepalive();
-        self.emit(Event::Playback(LocalPlayback::Authorizing));
-        // Android has no desktop opener; nothing opens the playback
-        // grant there (its URL has no waiting screen yet).
+        self.emit(Event::Playback(LocalPlayback::Authorizing {
+            url: flow.url.clone(),
+        }));
+        // Android has no desktop opener; the device list opens the
+        // browser itself (src/ui/devices.rs), once per grant URL.
         #[cfg(not(target_os = "android"))]
         let browser_url = flow.url.clone();
         #[cfg(not(target_os = "android"))]
