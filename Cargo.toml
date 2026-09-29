@@ -159,12 +159,14 @@ rfd = "0.17.2"
 # AccessKit connects egui's control names, states, and actions to native
 # screen readers. eframe only supports it with android-game-activity, so
 # Android (NativeActivity, below) builds without it.
-eframe = { version = "0.36", features = ["accesskit"] }
+eframe = { version = "0.36", default-features = false, features = ["accesskit"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # eframe's NativeActivity backend through winit. Features merge with the
 # desktop set above; the x11/wayland backends compile but stay unused.
-eframe = { version = "0.36", features = ["android-native-activity"] }
+# Defaults stay off: they include accesskit, which eframe rejects without
+# android-game-activity.
+eframe = { version = "0.36", default-features = false, features = ["android-native-activity"] }
 # AndroidApp feeds the event loop and locates the app's data directories.
 # The [patch] below swaps this for the same winit fork eframe uses.
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
