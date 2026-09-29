@@ -10816,6 +10816,109 @@ mod tests {
         assert_eq!(page_offset, 0.0, "the enclosing page must stay put");
     }
 
+    /// A touch drag on one shelf moves only that shelf: the second shelf
+    /// must not drag the first along, and later shelves must still move.
+    #[test]
+    fn touch_drag_moves_only_the_shelf_under_the_finger() {
+        let mut app = headless_app();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let touch = |phase, pos| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(0),
+            id: egui::TouchId(0),
+            phase,
+            pos,
+            force: None,
+        };
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Content edges and tops per shelf, plus the page offset.
+        type State = ([f32; 3], [f32; 3], f32);
+        let mut left = [0.0; 3];
+        let mut tops = [0.0; 3];
+        let mut page_offset = 0.0;
+        let mut frame = 0;
+        let mut run = |events: Vec<egui::Event>| -> State {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 800.0),
+                    )),
+                    time: Some(frame as f64 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let page = egui::ScrollArea::vertical().show(ui, |ui| {
+                        for (index, (slot, top)) in
+                            left.iter_mut().zip(tops.iter_mut()).enumerate()
+                        {
+                            crate::ui::widgets::shelf(
+                                ui,
+                                &app.palette,
+                                ["touch-a", "touch-b", "touch-c"][index],
+                                "Shelf",
+                                |ui| {
+                                    let rect = ui
+                                        .allocate_space(egui::vec2(1600.0, 100.0))
+                                        .1;
+                                    *slot = rect.left();
+                                    *top = rect.top();
+                                },
+                            );
+                        }
+                        ui.allocate_space(egui::vec2(100.0, 1200.0));
+                    });
+                    page_offset = page.state.offset.y;
+                },
+            );
+            output.textures_delta.clear();
+            frame += 1;
+            (left, tops, page_offset)
+        };
+        // Drag the finger left across the middle of one shelf.
+        let mut drag = |y: f32, run: &mut dyn FnMut(Vec<egui::Event>) -> State| -> State {
+            let at = |x: f32| egui::pos2(x, y);
+            run(vec![
+                egui::Event::PointerMoved(at(300.0)),
+                press(at(300.0), true),
+                touch(egui::TouchPhase::Start, at(300.0)),
+            ]);
+            for step in 1..=4 {
+                let x = 300.0 - 25.0 * step as f32;
+                run(vec![
+                    egui::Event::PointerMoved(at(x)),
+                    touch(egui::TouchPhase::Move, at(x)),
+                ]);
+            }
+            run(vec![
+                press(at(200.0), false),
+                touch(egui::TouchPhase::End, at(200.0)),
+            ]);
+            run(vec![])
+        };
+        run(vec![]);
+        let (initial, ys, _) = run(vec![]);
+        let still = |a: f32, b: f32| (a - b).abs() < 0.001;
+        let (after, _, page) = drag(ys[1] + 50.0, &mut run);
+        assert!(
+            after[1] < initial[1] - 50.0,
+            "the dragged shelf must move left"
+        );
+        assert!(still(after[0], initial[0]), "the first shelf must stay put");
+        assert!(still(after[2], initial[2]), "the third shelf must stay put");
+        assert_eq!(page, 0.0, "a level drag must not move the page");
+        let (after, _, page) = drag(ys[2] + 50.0, &mut run);
+        assert!(after[2] < initial[2] - 50.0, "the third shelf must move");
+        assert!(still(after[0], initial[0]), "the first shelf must stay put");
+        assert_eq!(page, 0.0, "a level drag must not move the page");
+    }
+
     #[test]
     fn wheel_notches_can_change_direction_without_waiting_for_a_gesture_gap() {
         let mut app = headless_app();
