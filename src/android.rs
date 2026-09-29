@@ -20,6 +20,15 @@ use crate::settings::Settings;
 #[allow(improper_ctypes_definitions)]
 #[unsafe(no_mangle)]
 pub extern "C" fn android_main(app: AndroidApp) {
+    // librespot loads TLS roots through rustls-native-certs, which finds
+    // nothing on Android by default and then unwraps into a panic. Point
+    // it at the system store (world-readable PEM files on every API
+    // level); the usual probe paths still apply underneath.
+    // SAFETY: first in android_main, before any thread spawns, so nothing
+    // else can observe the environment mid-update.
+    unsafe {
+        std::env::set_var("SSL_CERT_DIR", "/system/etc/security/cacerts");
+    }
     logcat::init();
     // stderr goes nowhere on Android; send panics to logcat instead (with
     // any link in the message removed: a URL can carry a token).
