@@ -15,6 +15,9 @@ use crate::paths::AppDirs;
 use crate::settings::Settings;
 
 /// Called by NativeActivity once the activity thread is ready.
+// The framework passes its app handle by value; that signature is fixed,
+// so the FFI-safety lint is silenced here rather than worked around.
+#[allow(improper_ctypes_definitions)]
 #[unsafe(no_mangle)]
 pub extern "C" fn android_main(app: AndroidApp) {
     logcat::init();
