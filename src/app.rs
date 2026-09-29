@@ -650,6 +650,22 @@ impl fastframe_shell::Resident for App {
     }
 }
 
+impl App {
+    /// The close half of a close-and-reopen window switch. Desktop closes
+    /// this window and the outer loop opens the other kind at once; Android
+    /// has a single activity window and no outer loop, so closing would
+    /// strand the app on a black surface. There the caller has already
+    /// flipped the setting, and the next frame draws the other UI in place.
+    fn close_for_window_switch(&mut self, ctx: &egui::Context) {
+        if cfg!(target_os = "android") {
+            ctx.request_repaint();
+        } else {
+            self.switch_intent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
 /// The tray menu's Play or Pause entry, for what is playing.
 fn play_pause_label(playing: bool) -> &'static str {
     if playing { "Pause" } else { "Play" }
@@ -9160,7 +9176,9 @@ impl App {
             },
             Action::ToggleWinampWindow => {
                 // One window at a time: this one closes and the loop in
-                // `main` opens the other kind where each was last.
+                // `main` opens the other kind where each was last. Android
+                // has no outer loop, so there the window stays and the
+                // next frame draws the other UI in its place.
                 if self.settings.winamp_window {
                     self.winamp.remember_position();
                 } else if self.settings.random_skin {
@@ -9183,8 +9201,7 @@ impl App {
                 self.session_window_pos = self.last_window_pos.or(self.session_window_pos);
                 self.settings.winamp_window = !self.settings.winamp_window;
                 self.settings_dirty = true;
-                self.switch_intent = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.close_for_window_switch(ctx);
             }
             Action::SetSkin(name) => {
                 self.settings.skin = name;
@@ -9217,8 +9234,7 @@ impl App {
                     if !self.settings.winamp_window {
                         // Decorations are fixed at creation. Replace only the
                         // native window, keeping the page and playback.
-                        self.switch_intent = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.close_for_window_switch(ctx);
                     }
                 }
             }
@@ -9231,8 +9247,7 @@ impl App {
                         // the visible mini player, its position, and playback
                         // while replacing only its native window.
                         self.winamp.remember_position();
-                        self.switch_intent = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.close_for_window_switch(ctx);
                     }
                 }
             }
@@ -9375,6 +9390,14 @@ impl App {
             }
             Action::Quit => {
                 self.quit_requested = true;
+                if cfg!(target_os = "android") {
+                    // No outer loop reads quit_requested, and closing the
+                    // only window would strand the app on a black surface:
+                    // shut down and leave the process, as the desktop's
+                    // loop end does.
+                    self.shutdown();
+                    std::process::exit(0);
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
