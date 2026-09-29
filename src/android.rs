@@ -15,7 +15,7 @@ use crate::paths::AppDirs;
 use crate::settings::Settings;
 
 /// Called by NativeActivity once the activity thread is ready.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn android_main(app: AndroidApp) {
     logcat::init();
     // stderr goes nowhere on Android; send panics to logcat instead (with
