@@ -1,0 +1,96 @@
+diff --git a/src/platform_impl/android/mod.rs b/src/platform_impl/android/mod.rs
+index c6a7416f..d682f336 100644
+--- a/src/platform_impl/android/mod.rs
++++ b/src/platform_impl/android/mod.rs
+@@ -138,7 +138,10 @@ pub struct EventLoop<T: 'static> {
+     user_events_sender: mpsc::Sender<T>,
+     user_events_receiver: PeekableReceiver<T>, // must wake looper whenever something gets sent
+     loop_running: bool,                        // Dispatched `NewEvents<Init>`
+-    running: bool,
++    // Set by `InitWindow`/`TerminateWindow`: the surface can outlive a
++    // resume (picture-in-picture), so this, not the resume state, gates
++    // resize and redraw delivery.
++    window_alive: bool,
+     pending_redraw: bool,
+     cause: StartCause,
+     ignore_volume_keys: bool,
+@@ -187,7 +190,7 @@ impl<T: 'static> EventLoop<T> {
+             user_events_sender,
+             user_events_receiver: PeekableReceiver::from_recv(user_events_receiver),
+             loop_running: false,
+-            running: false,
++            window_alive: false,
+             pending_redraw: false,
+             cause: StartCause::Init,
+             ignore_volume_keys: attributes.ignore_volume_keys,
+@@ -212,9 +215,15 @@ impl<T: 'static> EventLoop<T> {
+ 
+             match event {
+                 MainEvent::InitWindow { .. } => {
++                    // The surface exists from here until `TerminateWindow`,
++                    // whether or not the activity is resumed.
++                    self.window_alive = true;
+                     callback(event::Event::Resumed, self.window_target());
+                 },
+                 MainEvent::TerminateWindow { .. } => {
++                    // No surface, no drawing: a stopped activity stays
++                    // frozen, as before.
++                    self.window_alive = false;
+                     callback(event::Event::Suspended, self.window_target());
+                 },
+                 MainEvent::WindowResized { .. } => resized = true,
+@@ -270,8 +279,7 @@ impl<T: 'static> EventLoop<T> {
+                     warn!("TODO: forward onStart notification to application");
+                 },
+                 MainEvent::Resume { .. } => {
+-                    debug!("App Resumed - is running");
+-                    self.running = true;
++                    debug!("App Resumed");
+                 },
+                 MainEvent::SaveState { .. } => {
+                     // XXX: how to forward this state to applications?
+@@ -279,8 +287,10 @@ impl<T: 'static> EventLoop<T> {
+                     warn!("TODO: forward saveState notification to application");
+                 },
+                 MainEvent::Pause => {
+-                    debug!("App Paused - stopped running");
+-                    self.running = false;
++                    // Paused but still surfaced (picture-in-picture,
++                    // multi-window) keeps redrawing; only the surface going
++                    // away freezes the loop.
++                    debug!("App Paused");
+                 },
+                 MainEvent::Stop => {
+                     // XXX: how to forward this state to applications?
+@@ -329,7 +339,9 @@ impl<T: 'static> EventLoop<T> {
+             }
+         }
+ 
+-        if self.running {
++        // A visible window owns its surface and must keep resizing and
++        // redrawing, paused or not; only a surface-less one freezes.
++        if self.window_alive {
+             if resized {
+                 let size = if let Some(native_window) = self.android_app.native_window().as_ref() {
+                     let width = native_window.width() as _;
+@@ -549,7 +561,7 @@ impl<T: 'static> EventLoop<T> {
+         self.pending_redraw |= self.redraw_flag.get_and_reset();
+ 
+         timeout =
+-            if self.running && (self.pending_redraw || self.user_events_receiver.has_incoming()) {
++            if self.window_alive && (self.pending_redraw || self.user_events_receiver.has_incoming()) {
+                 // If we already have work to do then we don't want to block on the next poll
+                 Some(Duration::ZERO)
+             } else {
+@@ -577,9 +589,9 @@ impl<T: 'static> EventLoop<T> {
+                     //
+                     // For now, user_events and redraw_requests are the only reasons to expect
+                     // a wake up here so we can ignore the wake up if there are no events/requests.
+-                    // We also ignore wake ups while suspended.
++                    // We also ignore wake ups without a surface.
+                     self.pending_redraw |= self.redraw_flag.get_and_reset();
+-                    if !self.running
++                    if !self.window_alive
+                         || (!self.pending_redraw && !self.user_events_receiver.has_incoming())
+                     {
+                         return;
