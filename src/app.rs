@@ -10816,10 +10816,9 @@ mod tests {
         assert_eq!(page_offset, 0.0, "the enclosing page must stay put");
     }
 
-    /// A touch drag on one shelf moves only that shelf: the second shelf
-    /// must not drag the first along, and later shelves must still move.
-    #[test]
-    fn touch_drag_moves_only_the_shelf_under_the_finger() {
+    /// Three shelves in a page; touch-drag the given one left and report
+    /// every shelf's content edges before and after, plus the page offset.
+    fn drag_shelf(shelf: usize) -> ([f32; 3], [f32; 3], f32) {
         let mut app = headless_app();
         let ctx = egui::Context::default();
         theme::install(&ctx);
@@ -10836,13 +10835,11 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        // Content edges and tops per shelf, plus the page offset.
-        type State = ([f32; 3], [f32; 3], f32);
         let mut left = [0.0; 3];
         let mut tops = [0.0; 3];
         let mut page_offset = 0.0;
         let mut frame = 0;
-        let mut run = |events: Vec<egui::Event>| -> State {
+        let mut run = |events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -10879,44 +10876,69 @@ mod tests {
             );
             output.textures_delta.clear();
             frame += 1;
-            (left, tops, page_offset)
-        };
-        // Drag the finger left across the middle of one shelf.
-        let mut drag = |y: f32, run: &mut dyn FnMut(Vec<egui::Event>) -> State| -> State {
-            let at = |x: f32| egui::pos2(x, y);
-            run(vec![
-                egui::Event::PointerMoved(at(300.0)),
-                press(at(300.0), true),
-                touch(egui::TouchPhase::Start, at(300.0)),
-            ]);
-            for step in 1..=4 {
-                let x = 300.0 - 25.0 * step as f32;
-                run(vec![
-                    egui::Event::PointerMoved(at(x)),
-                    touch(egui::TouchPhase::Move, at(x)),
-                ]);
-            }
-            run(vec![
-                press(at(200.0), false),
-                touch(egui::TouchPhase::End, at(200.0)),
-            ]);
-            run(vec![])
         };
         run(vec![]);
-        let (initial, ys, _) = run(vec![]);
-        let still = |a: f32, b: f32| (a - b).abs() < 0.001;
-        let (after, _, page) = drag(ys[1] + 50.0, &mut run);
+        run(vec![]);
+        let initial = left;
+        let y = tops[shelf] + 50.0;
+        let at = |x: f32| egui::pos2(x, y);
+        run(vec![
+            egui::Event::PointerMoved(at(300.0)),
+            press(at(300.0), true),
+            touch(egui::TouchPhase::Start, at(300.0)),
+        ]);
+        for step in 1..=4 {
+            let x = 300.0 - 25.0 * step as f32;
+            run(vec![
+                egui::Event::PointerMoved(at(x)),
+                touch(egui::TouchPhase::Move, at(x)),
+            ]);
+        }
+        run(vec![
+            press(at(200.0), false),
+            touch(egui::TouchPhase::End, at(200.0)),
+        ]);
+        run(vec![]);
+        (initial, left, page_offset)
+    }
+
+    /// A touch drag on the second shelf moves only that shelf.
+    #[test]
+    fn touch_drag_on_the_second_shelf_leaves_the_first_shelf_put() {
+        let (initial, after, page) = drag_shelf(1);
+        assert_eq!(page, 0.0, "a level drag must not move the page");
         assert!(
             after[1] < initial[1] - 50.0,
-            "the dragged shelf must move left"
+            "the dragged shelf must move left: after={} initial={}",
+            after[1], initial[1]
         );
-        assert!(still(after[0], initial[0]), "the first shelf must stay put");
-        assert!(still(after[2], initial[2]), "the third shelf must stay put");
+        assert!(
+            (after[0] - initial[0]).abs() < 0.001,
+            "the first shelf must stay put: after={} initial={}",
+            after[0], initial[0]
+        );
+        assert!(
+            (after[2] - initial[2]).abs() < 0.001,
+            "the third shelf must stay put: after={} initial={}",
+            after[2], initial[2]
+        );
+    }
+
+    /// A touch drag on a later shelf moves it.
+    #[test]
+    fn touch_drag_moves_a_later_shelf() {
+        let (initial, after, page) = drag_shelf(2);
         assert_eq!(page, 0.0, "a level drag must not move the page");
-        let (after, _, page) = drag(ys[2] + 50.0, &mut run);
-        assert!(after[2] < initial[2] - 50.0, "the third shelf must move");
-        assert!(still(after[0], initial[0]), "the first shelf must stay put");
-        assert_eq!(page, 0.0, "a level drag must not move the page");
+        assert!(
+            after[2] < initial[2] - 50.0,
+            "the dragged shelf must move left: after={} initial={}",
+            after[2], initial[2]
+        );
+        assert!(
+            (after[0] - initial[0]).abs() < 0.001,
+            "the first shelf must stay put: after={} initial={}",
+            after[0], initial[0]
+        );
     }
 
     #[test]
