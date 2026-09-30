@@ -10819,7 +10819,7 @@ mod tests {
     /// Three shelves in a page; touch-drag the given one left and report
     /// every shelf's content edges before and after, plus the page offset.
     fn drag_shelf(shelf: usize) -> ([f32; 3], [f32; 3], f32) {
-        let mut app = headless_app();
+        let app = headless_app();
         let ctx = egui::Context::default();
         theme::install(&ctx);
         let touch = |phase, pos| egui::Event::Touch {
@@ -10876,11 +10876,11 @@ mod tests {
             );
             output.textures_delta.clear();
             frame += 1;
+            (left, tops, page_offset)
         };
         run(vec![]);
-        run(vec![]);
-        let initial = left;
-        let y = tops[shelf] + 50.0;
+        let (initial, ys, _) = run(vec![]);
+        let y = ys[shelf] + 50.0;
         let at = |x: f32| egui::pos2(x, y);
         run(vec![
             egui::Event::PointerMoved(at(300.0)),
@@ -10898,8 +10898,8 @@ mod tests {
             press(at(200.0), false),
             touch(egui::TouchPhase::End, at(200.0)),
         ]);
-        run(vec![]);
-        (initial, left, page_offset)
+        let (_, after, page) = run(vec![]);
+        (initial, after, page)
     }
 
     /// A touch drag on the second shelf moves only that shelf.
