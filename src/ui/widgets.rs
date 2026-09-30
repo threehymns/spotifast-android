@@ -2457,7 +2457,13 @@ pub fn shelf(
     // Wheel and scrollbar changes flow through the output back into next
     // frame's forced offset, so they keep working unchanged.
     touch.offset = output.state.offset.x;
-    touch.rect = Some(output.inner_rect);
+    // The reported inner rect keeps its pre-shrink height: for a horizontal
+    // shelf it reaches the page bottom, so every shelf above the finger
+    // would count as dragged too. Clamp the hitbox to the measured content.
+    touch.rect = Some(Rect::from_min_size(
+        output.inner_rect.min,
+        vec2(output.inner_rect.width(), output.content_size.y),
+    ));
     touch.overflows = output.inner_rect.width().ceil() < output.content_size.x;
     ui.ctx().data_mut(|data| {
         data.insert_temp(touch_id, touch);
