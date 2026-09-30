@@ -10838,6 +10838,7 @@ mod tests {
         let mut left = [0.0; 3];
         let mut tops = [0.0; 3];
         let mut page_offset = 0.0;
+        let mut page_x = 0.0;
         let mut frame = 0;
         let mut trace = String::new();
         let mut run = |events: Vec<egui::Event>| {
@@ -10873,7 +10874,7 @@ mod tests {
                         ui.allocate_space(egui::vec2(100.0, 1200.0));
                     });
                     page_offset = page.state.offset.y;
-                    let page_x = page.state.offset.x;
+                    page_x = page.state.offset.x;
                 },
             );
             output.textures_delta.clear();
