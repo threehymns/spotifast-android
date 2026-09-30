@@ -10904,7 +10904,7 @@ mod tests {
             press(at(200.0), false),
             touch(egui::TouchPhase::End, at(200.0)),
         ]);
-        let (_, after, page) = run(vec![]);
+        let (after, _, page) = run(vec![]);
         eprintln!("drag {shelf}: y={y:.1} init={initial:?} after={after:?}\n{trace}");
         (initial, after, page)
     }
