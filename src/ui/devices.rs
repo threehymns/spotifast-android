@@ -116,7 +116,8 @@ fn enable_playback_row(app: &mut App, ui: &mut egui::Ui) {
         let opened = ui.ctx().data(|data| data.get_temp::<String>(opened_id));
         if opened.as_deref() != Some(url.as_str()) {
             ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
-            ui.ctx().data_mut(|data| data.insert_temp(opened_id, url.clone()));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(opened_id, url.clone()));
         }
         let reopen = theme::link(
             ui,

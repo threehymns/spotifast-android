@@ -79,8 +79,8 @@ pub fn enter_winamp_pip(stack_height: u32) -> bool {
         log::warn!("picture-in-picture entry without a stashed activity");
         return false;
     };
-    let entered: jni::errors::Result<bool> = vm.attach_current_thread(
-        |env| -> jni::errors::Result<bool> {
+    let entered: jni::errors::Result<bool> =
+        vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
             let params = pip_params(env, aspect)?;
             let entered = env
                 .call_method(
@@ -91,8 +91,7 @@ pub fn enter_winamp_pip(stack_height: u32) -> bool {
                 )?
                 .z()?;
             Ok(entered)
-        },
-    );
+        });
     match entered {
         Ok(true) => true,
         Ok(false) => {

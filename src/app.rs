@@ -10860,8 +10860,7 @@ mod tests {
                 },
                 |ui| {
                     let page = egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (index, (slot, top)) in
-                            left.iter_mut().zip(tops.iter_mut()).enumerate()
+                        for (index, (slot, top)) in left.iter_mut().zip(tops.iter_mut()).enumerate()
                         {
                             crate::ui::widgets::shelf(
                                 ui,
@@ -10869,9 +10868,7 @@ mod tests {
                                 ["touch-a", "touch-b", "touch-c"][index],
                                 "Shelf",
                                 |ui| {
-                                    let rect = ui
-                                        .allocate_space(egui::vec2(1600.0, 100.0))
-                                        .1;
+                                    let rect = ui.allocate_space(egui::vec2(1600.0, 100.0)).1;
                                     *slot = rect.left();
                                     *top = rect.top();
                                 },
@@ -10928,17 +10925,20 @@ mod tests {
         assert!(
             after[1] < initial[1] - 50.0,
             "the dragged shelf must move left: after={} initial={}",
-            after[1], initial[1]
+            after[1],
+            initial[1]
         );
         assert!(
             (after[0] - initial[0]).abs() < 0.001,
             "the first shelf must stay put: after={} initial={}",
-            after[0], initial[0]
+            after[0],
+            initial[0]
         );
         assert!(
             (after[2] - initial[2]).abs() < 0.001,
             "the third shelf must stay put: after={} initial={}",
-            after[2], initial[2]
+            after[2],
+            initial[2]
         );
     }
 
@@ -10950,12 +10950,14 @@ mod tests {
         assert!(
             after[2] < initial[2] - 50.0,
             "the dragged shelf must move left: after={} initial={}",
-            after[2], initial[2]
+            after[2],
+            initial[2]
         );
         assert!(
             (after[0] - initial[0]).abs() < 0.001,
             "the first shelf must stay put: after={} initial={}",
-            after[0], initial[0]
+            after[0],
+            initial[0]
         );
     }
 
@@ -10985,12 +10987,14 @@ mod tests {
         assert!(
             (after[1] - initial[1]).abs() < 0.001,
             "the second shelf must stay put: after={} initial={}",
-            after[1], initial[1]
+            after[1],
+            initial[1]
         );
         assert!(
             (after[2] - initial[2]).abs() < 0.001,
             "the third shelf must stay put: after={} initial={}",
-            after[2], initial[2]
+            after[2],
+            initial[2]
         );
     }
 

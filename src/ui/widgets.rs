@@ -1,10 +1,10 @@
 //! Widgets shared by every view: covers, cards, track rows, menus, sliders.
 
+use egui::scroll_area::{DragScroll, ScrollSource};
 use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Ui, UiBuilder, Vec2,
     pos2, vec2,
 };
-use egui::scroll_area::{DragScroll, ScrollSource};
 
 use crate::api::models::*;
 use crate::app::App;
@@ -2447,10 +2447,12 @@ pub fn shelf(
     if touch.offset != unbounded {
         touch.vel = 0.0;
     }
-    let area = egui::ScrollArea::horizontal().id_salt(id).scroll_source(ScrollSource {
-        drag: DragScroll::Never,
-        ..Default::default()
-    });
+    let area = egui::ScrollArea::horizontal()
+        .id_salt(id)
+        .scroll_source(ScrollSource {
+            drag: DragScroll::Never,
+            ..Default::default()
+        });
     // On the first frame the offset is left to egui so a persisted scroll
     // position is restored; afterwards the drag state above owns it.
     let area = if first_frame {

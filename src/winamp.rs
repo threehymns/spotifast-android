@@ -197,8 +197,7 @@ impl WinampState {
             } else {
                 egui::TextureOptions::NEAREST
             };
-            let handle =
-                ctx.load_texture(format!("winamp-{}", sheet.file_stem()), image, options);
+            let handle = ctx.load_texture(format!("winamp-{}", sheet.file_stem()), image, options);
             self.textures.insert(sheet, handle);
         }
         self.textures
