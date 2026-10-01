@@ -60,15 +60,13 @@ jobs:
       # the step log.
       - name: Report clippy failures to the commit
         if: failure()
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPORT_OS: ${{ runner.os }}
-          REPORT_TITLE: Clippy failures
-        run: |
-          PYBIN="$(command -v python3 || command -v python)"
-          "$PYBIN" .github/workflows/report-failures.py clippy-default.log clippy-all.log > clippy-failures.md
-          test -s clippy-failures.md || echo 'The failing step left no failure sections in its logs.' > clippy-failures.md
-          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@clippy-failures.md
+          REPORT_REPO: ${{ github.repository }}
+          REPORT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/workflows/report-failures.sh "Clippy failures" clippy-failures.md clippy-default.log clippy-all.log
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -126,15 +124,13 @@ jobs:
       # read failures here instead of digging through logs.
       - name: Report failing tests to the commit
         if: failure()
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPORT_OS: ${{ runner.os }}
-          REPORT_TITLE: Failing tests
-        run: |
-          PYBIN="$(command -v python3 || command -v python)"
-          "$PYBIN" .github/workflows/report-failures.py test-default.log test-all.log > failing-tests.md
-          test -s failing-tests.md || echo 'The failing step left no failure sections in its logs.' > failing-tests.md
-          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@failing-tests.md
+          REPORT_REPO: ${{ github.repository }}
+          REPORT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/workflows/report-failures.sh "Failing tests" failing-tests.md test-default.log test-all.log
       - name: Native credential store (dummy grants)
         if: runner.os == 'Windows' || runner.os == 'macOS'
         timeout-minutes: 2
