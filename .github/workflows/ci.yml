@@ -21,6 +21,8 @@ jobs:
   quality:
     name: quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -50,9 +52,23 @@ jobs:
       - name: Release name migration regressions
         run: python3 packaging/test-release-names.py
       - name: Clippy (default features)
-        run: mbx clippy --locked --all-targets -- -D warnings
+        run: mbx clippy --locked --all-targets -- -D warnings 2>&1 | tee clippy-default.log; exit ${PIPESTATUS[0]}
       - name: Clippy (all features)
-        run: mbx clippy --locked --all-targets --all-features -- -D warnings
+        run: mbx clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee clippy-all.log; exit ${PIPESTATUS[0]}
+      # Clippy excerpts as a commit comment, like the test job's reporter:
+      # the lint name and context land on the commit instead of hiding in
+      # the step log.
+      - name: Report clippy failures to the commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_OS: ${{ runner.os }}
+          REPORT_TITLE: Clippy failures
+        run: |
+          PYBIN="$(command -v python3 || command -v python)"
+          "$PYBIN" .github/workflows/report-failures.py clippy-default.log clippy-all.log > clippy-failures.md
+          test -s clippy-failures.md || echo 'The failing step left no failure sections in its logs.' > clippy-failures.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@clippy-failures.md
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -113,34 +129,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPORT_OS: ${{ runner.os }}
+          REPORT_TITLE: Failing tests
         run: |
-          python3 - test-default.log test-all.log > failing-tests.md <<'EOF'
-          import os, re, sys
-          chunks = []
-          for path in sys.argv[1:]:
-              try:
-                  text = open(path, errors='replace').read()
-              except OSError:
-                  continue
-              if 'test result: FAILED' not in text and '\nerror' not in text:
-                  continue
-              m = re.search(r'^failures:\n((?:    .+\n)+)', text, re.M)
-              names = [l.strip() for l in m.group(1).splitlines() if l.strip()] if m else []
-              secs = []
-              for name in names[:10]:
-                  mm = re.search(r'^---- ' + re.escape(name) + r' stdout ----\n(.*?)(?=^---- |\nfailures:|\ntest result:)',
-                                 text, re.M | re.S)
-                  if mm:
-                      secs.append(f'### {name}\n```\n{mm.group(1)[:12000]}\n```')
-              if secs:
-                  chunks.append(f'## {path}\n' + '\n'.join(secs))
-              else:
-                  tail = '\n'.join(text.splitlines()[-80:])
-                  chunks.append(f'## {path} (no per-test sections)\n```\n{tail[-12000:]}\n```')
-          body = '\n\n'.join(chunks) if chunks else 'Tests failed but no failure sections were captured.'
-          sys.stdout.write(f"## Failing tests ({os.environ.get('REPORT_OS', '?')})\n{body}"[:60000])
-          EOF
-          test -s failing-tests.md || echo 'Tests failed but no failure sections were captured.' > failing-tests.md
+          PYBIN="$(command -v python3 || command -v python)"
+          "$PYBIN" .github/workflows/report-failures.py test-default.log test-all.log > failing-tests.md
+          test -s failing-tests.md || echo 'The failing step left no failure sections in its logs.' > failing-tests.md
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@failing-tests.md
       - name: Native credential store (dummy grants)
         if: runner.os == 'Windows' || runner.os == 'macOS'
