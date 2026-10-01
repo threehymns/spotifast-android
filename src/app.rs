@@ -10843,9 +10843,7 @@ mod tests {
         let mut left = [0.0; 3];
         let mut tops = [0.0; 3];
         let mut page_offset = 0.0;
-        let mut page_x = 0.0;
         let mut frame = 0;
-        let mut trace = String::new();
         let mut min_edge = f32::INFINITY;
         let mut run = |events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
@@ -10877,13 +10875,9 @@ mod tests {
                         ui.allocate_space(egui::vec2(100.0, 1200.0));
                     });
                     page_offset = page.state.offset.y;
-                    page_x = page.state.offset.x;
                 },
             );
             output.textures_delta.clear();
-            trace.push_str(&format!(
-                "f{frame} L={left:?} T={tops:?} P=({page_x:.1},{page_offset:.1})\n"
-            ));
             min_edge = min_edge.min(left[shelf]);
             frame += 1;
             (left, tops, page_offset)
@@ -10912,8 +10906,6 @@ mod tests {
             run(vec![]);
         }
         let (after, _, page) = run(vec![]);
-        eprintln!("drag {shelf} {from_x}>{to_x} y={y:.1} min={min_edge:.1}");
-        eprintln!("init={initial:?} after={after:?}\n{trace}");
         (initial, after, page, min_edge)
     }
 
