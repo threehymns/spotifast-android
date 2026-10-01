@@ -10818,7 +10818,12 @@ mod tests {
 
     /// Three shelves in a page; touch-drag the given one left and report
     /// every shelf's content edges before and after, plus the page offset.
-    fn drag_shelf(shelf: usize) -> ([f32; 3], [f32; 3], f32) {
+    fn drag_shelf(
+        shelf: usize,
+        from_x: f32,
+        to_x: f32,
+        settle: usize,
+    ) -> ([f32; 3], [f32; 3], f32, f32) {
         let app = headless_app();
         let ctx = egui::Context::default();
         theme::install(&ctx);
@@ -10841,6 +10846,7 @@ mod tests {
         let mut page_x = 0.0;
         let mut frame = 0;
         let mut trace = String::new();
+        let mut min_edge = f32::INFINITY;
         let mut run = |events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -10881,6 +10887,7 @@ mod tests {
             trace.push_str(&format!(
                 "f{frame} L={left:?} T={tops:?} P=({page_x:.1},{page_offset:.1})\n"
             ));
+            min_edge = min_edge.min(left[shelf]);
             frame += 1;
             (left, tops, page_offset)
         };
@@ -10889,30 +10896,34 @@ mod tests {
         let y = ys[shelf] + 50.0;
         let at = |x: f32| egui::pos2(x, y);
         run(vec![
-            egui::Event::PointerMoved(at(300.0)),
-            press(at(300.0), true),
-            touch(egui::TouchPhase::Start, at(300.0)),
+            egui::Event::PointerMoved(at(from_x)),
+            press(at(from_x), true),
+            touch(egui::TouchPhase::Start, at(from_x)),
         ]);
         for step in 1..=4 {
-            let x = 300.0 - 25.0 * step as f32;
+            let x = from_x + (to_x - from_x) * step as f32 / 4.0;
             run(vec![
                 egui::Event::PointerMoved(at(x)),
                 touch(egui::TouchPhase::Move, at(x)),
             ]);
         }
         run(vec![
-            press(at(200.0), false),
-            touch(egui::TouchPhase::End, at(200.0)),
+            press(at(to_x), false),
+            touch(egui::TouchPhase::End, at(to_x)),
         ]);
+        for _ in 0..settle {
+            run(vec![]);
+        }
         let (after, _, page) = run(vec![]);
-        eprintln!("drag {shelf}: y={y:.1} init={initial:?} after={after:?}\n{trace}");
-        (initial, after, page)
+        eprintln!("drag {shelf} {from_x}>{to_x} y={y:.1} min={min_edge:.1}");
+        eprintln!("init={initial:?} after={after:?}\n{trace}");
+        (initial, after, page, min_edge)
     }
 
     /// A touch drag on the second shelf moves only that shelf.
     #[test]
     fn touch_drag_on_the_second_shelf_leaves_the_first_shelf_put() {
-        let (initial, after, page) = drag_shelf(1);
+        let (initial, after, page, _) = drag_shelf(1, 300.0, 200.0, 0);
         assert_eq!(page, 0.0, "a level drag must not move the page");
         assert!(
             after[1] < initial[1] - 50.0,
@@ -10934,7 +10945,7 @@ mod tests {
     /// A touch drag on a later shelf moves it.
     #[test]
     fn touch_drag_moves_a_later_shelf() {
-        let (initial, after, page) = drag_shelf(2);
+        let (initial, after, page, _) = drag_shelf(2, 300.0, 200.0, 0);
         assert_eq!(page, 0.0, "a level drag must not move the page");
         assert!(
             after[2] < initial[2] - 50.0,
@@ -10945,6 +10956,34 @@ mod tests {
             (after[0] - initial[0]).abs() < 0.001,
             "the first shelf must stay put: after={} initial={}",
             after[0], initial[0]
+        );
+    }
+
+    /// A hard fling into the far edge stops there: the content is 1600
+    /// wide in a 600 viewport, so no frame may render past -1000.
+    #[test]
+    fn hard_fling_stops_at_the_far_edge() {
+        let (initial, after, page, min_edge) = drag_shelf(0, 550.0, 50.0, 30);
+        assert_eq!(page, 0.0, "a level fling must not move the page");
+        assert!(
+            min_edge >= -1000.0 - 0.001,
+            "nothing may render past the edge: min_edge={min_edge}"
+        );
+        assert!(
+            (after[0] + 1000.0).abs() < 0.001,
+            "the fling must settle at the edge: after={} initial={}",
+            after[0],
+            initial[0]
+        );
+        assert!(
+            (after[1] - initial[1]).abs() < 0.001,
+            "the second shelf must stay put: after={} initial={}",
+            after[1], initial[1]
+        );
+        assert!(
+            (after[2] - initial[2]).abs() < 0.001,
+            "the third shelf must stay put: after={} initial={}",
+            after[2], initial[2]
         );
     }
 
