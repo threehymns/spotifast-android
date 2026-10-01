@@ -109,12 +109,13 @@ jobs:
       # from some sandboxes, but the API is not, so automation (and humans)
       # read failures here instead of digging through logs.
       - name: Report failing tests to the commit
-        if: failure() && runner.os == 'Linux'
+        if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_OS: ${{ runner.os }}
         run: |
           python3 - test-default.log test-all.log > failing-tests.md <<'EOF'
-          import re, sys
+          import os, re, sys
           chunks = []
           for path in sys.argv[1:]:
               try:
@@ -137,7 +138,7 @@ jobs:
                   tail = '\n'.join(text.splitlines()[-80:])
                   chunks.append(f'## {path} (no per-test sections)\n```\n{tail[-12000:]}\n```')
           body = '\n\n'.join(chunks) if chunks else 'Tests failed but no failure sections were captured.'
-          sys.stdout.write(f'## Failing tests\n{body}'[:60000])
+          sys.stdout.write(f"## Failing tests ({os.environ.get('REPORT_OS', '?')})\n{body}"[:60000])
           EOF
           test -s failing-tests.md || echo 'Tests failed but no failure sections were captured.' > failing-tests.md
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@failing-tests.md
