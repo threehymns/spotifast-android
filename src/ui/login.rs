@@ -258,26 +258,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                     ui.data_mut(|data| data.insert_temp(proxy_id, proxy_open));
                         });
                 });
-            // Temporary build marker (revert before merge): the short
-            // commit hash identifies the exact APK under test on Android;
-            // desktop builds keep the plain semver version.
-            #[cfg(target_os = "android")]
-            let version = match option_env!("GITHUB_SHA") {
-                Some(sha) => format!(
-                    "{} • {}",
-                    env!("CARGO_PKG_VERSION"),
-                    &sha[..sha.len().min(7)]
-                ),
-                None => format!("{} • local", env!("CARGO_PKG_VERSION")),
-            };
-            #[cfg(not(target_os = "android"))]
-            let version = env!("CARGO_PKG_VERSION").to_string();
             ui.painter().text(
                 pos2(rect.center().x, rect.bottom() - 24.0),
                 egui::Align2::CENTER_BOTTOM,
                 // Translators: {version} is the app's version number, such as 1.2.0.
                 gettext(locale, "Spotifast {version} • not affiliated with Spotify")
-                    .replace("{version}", &version),
+                    .replace("{version}", env!("CARGO_PKG_VERSION")),
                 theme::regular(11.5),
                 palette.dim,
             );
