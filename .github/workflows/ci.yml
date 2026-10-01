@@ -113,12 +113,23 @@ jobs:
           cache-generation: test-v1
       # The demo feature carries the headless render test that lays out every
       # page, panel, and dialog without a display.
+      # Windows runs these under pwsh: git-bash prepends its /usr/bin to
+      # PATH, where its own link.exe shadows MSVC's and every Rust link
+      # fails. pwsh's Tee-Object captures the log there instead.
       - name: Tests (default features)
+        if: runner.os != 'Windows'
         shell: bash
         run: mbx test --locked --all-targets 2>&1 | tee test-default.log; exit ${PIPESTATUS[0]}
+      - name: Tests (default features)
+        if: runner.os == 'Windows'
+        run: mbx test --locked --all-targets 2>&1 | Tee-Object -FilePath test-default.log; exit $LASTEXITCODE
       - name: Tests (all features)
+        if: runner.os != 'Windows'
         shell: bash
         run: mbx test --locked --all-targets --all-features 2>&1 | tee test-all.log; exit ${PIPESTATUS[0]}
+      - name: Tests (all features)
+        if: runner.os == 'Windows'
+        run: mbx test --locked --all-targets --all-features 2>&1 | Tee-Object -FilePath test-all.log; exit $LASTEXITCODE
       # Failure excerpts as a commit comment: CI log downloads are unreachable
       # from some sandboxes, but the API is not, so automation (and humans)
       # read failures here instead of digging through logs.
