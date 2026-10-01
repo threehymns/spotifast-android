@@ -2456,12 +2456,20 @@ pub fn shelf(
     });
     // Wheel and scrollbar changes flow through the output back into next
     // frame's forced offset, so they keep working unchanged.
-    touch.offset = output.state.offset.x;
-    // The area clamps after laying out, so without this the content
-    // renders one fling-step past the edge every frame and strobes back
-    // as the velocity decays. Clamp the forced value itself and stop dead.
-    let unbounded = touch.offset;
+    let reported = output.state.offset.x;
     let max = (output.content_size.x - output.inner_rect.width()).max(0.0);
+    // At rest against the far edge, hold it: the reported offset carries
+    // pixel-quantized clamp noise (within ~1pt) that would otherwise
+    // ratchet the edge backward frame after frame. Anything farther out
+    // is a real scroll-back (wheel, bar) and releases the hold.
+    let pinned = !touch.dragging && touch.vel == 0.0 && touch.offset >= max - 1.5;
+    if !(pinned && max - reported <= 1.5) {
+        touch.offset = reported;
+    }
+    // The area clamps after laying out, so the content would render one
+    // fling-step past the edge every frame and strobe back as the velocity
+    // decays. Clamp the forced value itself and stop dead on contact.
+    let unbounded = touch.offset;
     touch.offset = touch.offset.clamp(0.0, max);
     if touch.offset != unbounded {
         touch.vel = 0.0;
