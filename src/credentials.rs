@@ -1368,8 +1368,12 @@ mod tests {
     }
 
     fn file_store_at(dir: &std::path::Path) -> FileStore {
-        let dir = dir.to_path_buf();
-        FileStore { dir }
+        let dirs = crate::paths::AppDirs {
+            config: dir.join("config"),
+            state: dir.to_path_buf(),
+            cache: dir.join("cache"),
+        };
+        FileStore::new(&dirs)
     }
 
     #[test]
@@ -1396,7 +1400,7 @@ mod tests {
         let mut store = file_store_at(&dir);
         let key = "ab:shared-web";
         store.write(key, b"x").unwrap();
-        assert!(dir.join("ab_shared-web").exists());
+        assert!(dir.join("credentials").join("ab_shared-web").exists());
         assert_eq!(store.read(key).unwrap(), Some(b"x".to_vec()));
         let _ = std::fs::remove_dir_all(&dir);
     }
