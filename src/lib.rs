@@ -1,10 +1,14 @@
 //! Spotifast's internals, exposed so diagnostics and tests can reach them.
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod api;
 pub mod app;
 #[cfg(target_os = "linux")]
 pub mod appearance;
 pub mod auth;
+#[cfg(target_os = "android")]
+pub mod auth_android;
 pub mod autoscroll;
 pub mod backend;
 pub mod bidi;
@@ -30,13 +34,18 @@ pub mod media;
 #[cfg(target_os = "linux")]
 #[path = "mpris.rs"]
 pub mod media_controls;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "android")]
+#[path = "media_android.rs"]
+pub mod media_controls;
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 #[path = "media_native.rs"]
 pub mod media_controls;
 pub mod milkdrop;
 pub mod model;
 pub mod opener;
 pub mod paths;
+#[cfg(target_os = "android")]
+pub mod pip_android;
 pub mod player;
 pub mod playlist_cover;
 pub mod resample;

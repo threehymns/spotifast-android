@@ -579,6 +579,7 @@ pub enum Command {
     ChoosePlaylistCover {
         id: String,
         request: u64,
+        #[cfg(not(target_os = "android"))]
         selected:
             std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>,
     },
@@ -588,6 +589,14 @@ pub enum Command {
         config: ProxyConfig,
     },
     CancelSignIn,
+    /// A redirect-catcher instance stashed an OAuth response (Android only).
+    #[cfg(target_os = "android")]
+    CheckAuthRedirect,
+    /// The user pasted the browser's redirect URL (fallback when the
+    /// loopback listener is unreachable).
+    SubmitPastedRedirect {
+        url: String,
+    },
     SignOut,
     /// Authorize local playback on this computer (a separate browser grant).
     AuthorizePlayback,
@@ -853,8 +862,11 @@ pub enum Event {
 pub enum LocalPlayback {
     /// Not authorized; local playback is unavailable but the app still works.
     Unavailable,
-    /// The browser is open for the playback grant.
-    Authorizing,
+    /// The browser is open for the playback grant; the URL lets
+    /// platforms without a desktop opener show it themselves.
+    Authorizing {
+        url: String,
+    },
     /// Connecting the librespot engine.
     Connecting,
     /// This computer is a ready Spotify Connect device.
@@ -1022,15 +1034,22 @@ impl Backend {
         if self.offline {
             return;
         }
+        #[cfg(not(target_os = "android"))]
         let selected = rfd::AsyncFileDialog::new()
             .set_title("Choose playlist cover")
             .add_filter("JPEG or PNG image", &["jpg", "jpeg", "png"])
             .pick_file();
+        #[cfg(not(target_os = "android"))]
         self.send(Command::ChoosePlaylistCover {
             id,
             request,
             selected: Box::pin(selected),
         });
+        // No system file picker is wired on Android yet; still send the
+        // command so the dialog answers at once instead of waiting on a
+        // choice that can never come.
+        #[cfg(target_os = "android")]
+        self.send(Command::ChoosePlaylistCover { id, request });
     }
 
     pub fn api(&self, request: ApiRequest) {
@@ -1354,6 +1373,10 @@ struct Worker {
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
     authorizing_source: Option<ApiSource>,
+    /// Completes the pending sign-in with an out-of-band redirect: a
+    /// VIEW-intent URI caught while frozen, or a pasted browser URL (see
+    /// `Command::CheckAuthRedirect` and `Command::SubmitPastedRedirect`).
+    auth_redirect_tx: Option<tokio::sync::oneshot::Sender<String>>,
     pending_authorization: Option<ApiSource>,
     reconnects: Vec<Instant>,
     /// What the engine was playing when it went down, to load again once
@@ -1413,6 +1436,7 @@ impl Worker {
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
+            auth_redirect_tx: None,
             pending_authorization: None,
             reconnects: Vec::new(),
             resume: None,
@@ -1634,13 +1658,20 @@ impl Worker {
                 Command::ChoosePlaylistCover {
                     id,
                     request,
+                    #[cfg(not(target_os = "android"))]
                     selected,
                 } => {
                     let events = self.events.clone();
                     let waker = self.waker.clone();
                     tokio::spawn(async move {
-                        let selected = selected.await;
-                        let result = match selected {
+                        // No file picker on Android yet: no cover chosen.
+                        #[cfg(target_os = "android")]
+                        let result: Result<
+                            Option<crate::playlist_cover::Cover>,
+                            String,
+                        > = Ok(None);
+                        #[cfg(not(target_os = "android"))]
+                        let result = match selected.await {
                             None => Ok(None),
                             Some(file) => tokio::task::spawn_blocking(move || {
                                 crate::playlist_cover::read(file.path()).map(Some)
@@ -1657,6 +1688,23 @@ impl Worker {
                         });
                         waker.wake();
                     });
+                }
+                #[cfg(target_os = "android")]
+                Command::CheckAuthRedirect => {
+                    if let Some(uri) = crate::auth_android::take_redirect(&self.dirs) {
+                        if let Some(sender) = self.auth_redirect_tx.take() {
+                            let _ = sender.send(uri);
+                        } else {
+                            log::debug!("stray authorization redirect; no sign-in pending");
+                        }
+                    }
+                }
+                Command::SubmitPastedRedirect { url } => {
+                    if let Some(sender) = self.auth_redirect_tx.take() {
+                        let _ = sender.send(url);
+                    } else {
+                        log::debug!("pasted sign-in URL with no sign-in pending");
+                    }
                 }
                 Command::Shutdown => break,
                 Command::SignIn { request, config } => self.change_proxy(request, config, true),
@@ -2350,6 +2398,14 @@ impl Worker {
         let flow = crate::auth::begin(grant.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
+        #[cfg(target_os = "android")]
+        crate::auth_android::clear_redirect(&self.dirs);
+        let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
+        self.auth_redirect_tx = Some(redirect_tx);
+        // Hold the process unfrozen while the browser is in front so the
+        // loopback listener below can receive Spotify's redirect.
+        #[cfg(target_os = "android")]
+        crate::auth_android::start_keepalive();
         self.authorizing_source = Some(source);
         self.api.set_state(source, SessionState::Authorizing);
         if source == ApiSource::Shared {
@@ -2357,7 +2413,11 @@ impl Worker {
                 url: flow.url.clone(),
             }));
         }
+        // Android has no desktop opener; the waiting screen opens the
+        // browser itself (src/ui/login.rs), once per sign-in URL.
+        #[cfg(not(target_os = "android"))]
         let browser_url = flow.url.clone();
+        #[cfg(not(target_os = "android"))]
         tokio::task::spawn_blocking(move || {
             if let Err(error) = crate::opener::open(&browser_url) {
                 log::warn!("unable to open a browser: {error}");
@@ -2368,13 +2428,23 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
-                let code =
-                    crate::auth::wait_for_code(grant.redirect_port, &flow.state, cancel_rx).await?;
+                // Race the loopback listener against an out-of-band
+                // redirect (caught while frozen, or pasted from the
+                // browser).
+                let code = crate::auth::wait_for_code_with_redirect(
+                    grant.redirect_port,
+                    &flow.state,
+                    redirect_rx,
+                    cancel_rx,
+                )
+                .await?;
                 let response =
                     crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await?;
                 crate::auth::StoredToken::from_response(&grant.client_id, response, None)
             }
             .await;
+            #[cfg(target_os = "android")]
+            crate::auth_android::stop_keepalive();
             match result {
                 Ok(token) => {
                     let _ = commands.send(Command::WebSignedIn {
@@ -2615,8 +2685,22 @@ impl Worker {
         let flow = crate::auth::begin(grant.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
-        self.emit(Event::Playback(LocalPlayback::Authorizing));
+        #[cfg(target_os = "android")]
+        crate::auth_android::clear_redirect(&self.dirs);
+        let (redirect_tx, redirect_rx) = tokio::sync::oneshot::channel();
+        self.auth_redirect_tx = Some(redirect_tx);
+        // Hold the process unfrozen while the browser is in front so the
+        // loopback listener below can receive Spotify's redirect.
+        #[cfg(target_os = "android")]
+        crate::auth_android::start_keepalive();
+        self.emit(Event::Playback(LocalPlayback::Authorizing {
+            url: flow.url.clone(),
+        }));
+        // Android has no desktop opener; the device list opens the
+        // browser itself (src/ui/devices.rs), once per grant URL.
+        #[cfg(not(target_os = "android"))]
         let browser_url = flow.url.clone();
+        #[cfg(not(target_os = "android"))]
         tokio::task::spawn_blocking(move || {
             if let Err(error) = crate::opener::open(&browser_url) {
                 log::warn!("unable to open a browser: {error}");
@@ -2628,11 +2712,21 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
-                let code =
-                    crate::auth::wait_for_code(grant.redirect_port, &flow.state, cancel_rx).await?;
+                // Race the loopback listener against an out-of-band
+                // redirect (caught while frozen, or pasted from the
+                // browser).
+                let code = crate::auth::wait_for_code_with_redirect(
+                    grant.redirect_port,
+                    &flow.state,
+                    redirect_rx,
+                    cancel_rx,
+                )
+                .await?;
                 crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await
             }
             .await;
+            #[cfg(target_os = "android")]
+            crate::auth_android::stop_keepalive();
             match result {
                 Ok(token) => {
                     let _ = commands.send(Command::PlaybackAuthorized {

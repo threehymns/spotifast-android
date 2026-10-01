@@ -1074,6 +1074,9 @@ pub enum Action {
     Reload(Page),
     SignIn,
     CancelSignIn,
+    SubmitPastedRedirect {
+        url: String,
+    },
     SignOut,
     /// Add, replace, or remove the optional personal Web API app.
     ConfigurePersonalWebApp,

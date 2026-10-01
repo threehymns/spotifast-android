@@ -185,11 +185,19 @@ impl WinampState {
                 [bitmap.width as usize, bitmap.height as usize],
                 &bitmap.rgba,
             );
-            let handle = ctx.load_texture(
-                format!("winamp-{}", sheet.file_stem()),
-                image,
-                egui::TextureOptions::NEAREST,
-            );
+            // Android fit-scales fractionally (PiP sizes are arbitrary).
+            // Upscaling stays NEAREST so fullscreen keeps crisp pixels;
+            // only downscaling smooths. Desktop keeps full NEAREST.
+            let options = if cfg!(target_os = "android") {
+                egui::TextureOptions {
+                    magnification: egui::TextureFilter::Nearest,
+                    minification: egui::TextureFilter::Linear,
+                    ..egui::TextureOptions::LINEAR
+                }
+            } else {
+                egui::TextureOptions::NEAREST
+            };
+            let handle = ctx.load_texture(format!("winamp-{}", sheet.file_stem()), image, options);
             self.textures.insert(sheet, handle);
         }
         self.textures

@@ -650,6 +650,22 @@ impl fastframe_shell::Resident for App {
     }
 }
 
+impl App {
+    /// The close half of a close-and-reopen window switch. Desktop closes
+    /// this window and the outer loop opens the other kind at once; Android
+    /// has a single activity window and no outer loop, so closing would
+    /// strand the app on a black surface. There the caller has already
+    /// flipped the setting, and the next frame draws the other UI in place.
+    fn close_for_window_switch(&mut self, ctx: &egui::Context) {
+        if cfg!(target_os = "android") {
+            ctx.request_repaint();
+        } else {
+            self.switch_intent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
 /// The tray menu's Play or Pause entry, for what is playing.
 fn play_pause_label(playing: bool) -> &'static str {
     if playing { "Pause" } else { "Play" }
@@ -2105,7 +2121,7 @@ impl App {
                     gettext(self.locale, "Local playback: {error}").replace("{error}", message),
                 );
             }
-            LocalPlayback::Authorizing | LocalPlayback::Connecting => {}
+            LocalPlayback::Authorizing { .. } | LocalPlayback::Connecting => {}
         }
         self.local_playback = status;
     }
@@ -2754,7 +2770,10 @@ impl App {
             .retain(|toast| toast.created.elapsed() < TOAST_LIFETIME);
         self.maybe_suggest_personal_app();
 
-        if self.settings.check_for_updates
+        // The Play Store (or the sideloaded APK's installer) owns updates on
+        // Android; the desktop updater only knows desktop releases.
+        if !cfg!(target_os = "android")
+            && self.settings.check_for_updates
             && !self.offline
             && self
                 .last_update_check
@@ -6820,7 +6839,7 @@ impl App {
                 // wait for the connecting engine or ask for a device.
                 if matches!(
                     self.local_playback,
-                    LocalPlayback::Connecting | LocalPlayback::Authorizing
+                    LocalPlayback::Connecting | LocalPlayback::Authorizing { .. }
                 ) || (self.settings.playback_authorized
                     && matches!(self.auth, AuthStatus::Starting | AuthStatus::Connecting))
                 {
@@ -8837,6 +8856,9 @@ impl App {
                 self.sign_in_url = None;
                 self.auth = AuthStatus::SignedOut;
             }
+            Action::SubmitPastedRedirect { url } => {
+                self.backend.send(Command::SubmitPastedRedirect { url });
+            }
             Action::ConfigurePersonalWebApp => {
                 self.save_settings();
                 self.backend.send(Command::ConfigurePersonalWebApp(
@@ -9106,7 +9128,7 @@ impl App {
                 } else if !self.local_ready
                     && !matches!(
                         self.local_playback,
-                        LocalPlayback::Authorizing | LocalPlayback::Connecting
+                        LocalPlayback::Authorizing { .. } | LocalPlayback::Connecting
                     )
                 {
                     self.settings.playback_authorized = true;
@@ -9154,7 +9176,9 @@ impl App {
             },
             Action::ToggleWinampWindow => {
                 // One window at a time: this one closes and the loop in
-                // `main` opens the other kind where each was last.
+                // `main` opens the other kind where each was last. Android
+                // has no outer loop, so there the window stays and the
+                // next frame draws the other UI in its place.
                 if self.settings.winamp_window {
                     self.winamp.remember_position();
                 } else if self.settings.random_skin {
@@ -9177,8 +9201,20 @@ impl App {
                 self.session_window_pos = self.last_window_pos.or(self.session_window_pos);
                 self.settings.winamp_window = !self.settings.winamp_window;
                 self.settings_dirty = true;
-                self.switch_intent = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // Android has no mini-player window: the toggle enters
+                // picture-in-picture instead, and leaving the skin expands
+                // back to fullscreen. A device without PiP falls back to
+                // the fullscreen skin.
+                #[cfg(target_os = "android")]
+                if self.settings.winamp_window {
+                    let stack = crate::ui::winamp::stack_height(&self.settings);
+                    if !crate::pip_android::enter_winamp_pip(stack) {
+                        self.toast(gettext(self.locale, "Picture-in-picture isn't available"));
+                    }
+                } else {
+                    crate::pip_android::exit_pip_to_fullscreen();
+                }
+                self.close_for_window_switch(ctx);
             }
             Action::SetSkin(name) => {
                 self.settings.skin = name;
@@ -9211,8 +9247,7 @@ impl App {
                     if !self.settings.winamp_window {
                         // Decorations are fixed at creation. Replace only the
                         // native window, keeping the page and playback.
-                        self.switch_intent = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.close_for_window_switch(ctx);
                     }
                 }
             }
@@ -9225,8 +9260,7 @@ impl App {
                         // the visible mini player, its position, and playback
                         // while replacing only its native window.
                         self.winamp.remember_position();
-                        self.switch_intent = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.close_for_window_switch(ctx);
                     }
                 }
             }
@@ -9369,6 +9403,14 @@ impl App {
             }
             Action::Quit => {
                 self.quit_requested = true;
+                if cfg!(target_os = "android") {
+                    // No outer loop reads quit_requested, and closing the
+                    // only window would strand the app on a black surface:
+                    // shut down and leave the process, as the desktop's
+                    // loop end does.
+                    self.shutdown();
+                    std::process::exit(0);
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -9437,6 +9479,11 @@ impl App {
     }
 
     fn check_for_updates(&mut self, manual: bool) {
+        // The store owns updates on Android; the desktop updater only knows
+        // desktop releases.
+        if cfg!(target_os = "android") {
+            return;
+        }
         if self.update_checking
             || (self.offline && self.update_source.is_github())
             || !matches!(
@@ -10767,6 +10814,180 @@ mod tests {
         }
         assert!(shelf_left < initial_left, "Shift+wheel must move the shelf");
         assert_eq!(page_offset, 0.0, "the enclosing page must stay put");
+    }
+
+    /// Three shelves in a page; touch-drag the given one left and report
+    /// every shelf's content edges before and after, plus the page offset.
+    fn drag_shelf(
+        shelf: usize,
+        from_x: f32,
+        to_x: f32,
+        settle: usize,
+    ) -> ([f32; 3], [f32; 3], f32, f32) {
+        let app = headless_app();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let touch = |phase, pos| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(0),
+            id: egui::TouchId(0),
+            phase,
+            pos,
+            force: None,
+        };
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut left = [0.0; 3];
+        let mut tops = [0.0; 3];
+        let mut page_offset = 0.0;
+        let mut frame = 0;
+        let mut min_edge = f32::INFINITY;
+        let mut run = |events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 800.0),
+                    )),
+                    time: Some(frame as f64 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let page = egui::ScrollArea::vertical().show(ui, |ui| {
+                        for (index, (slot, top)) in left.iter_mut().zip(tops.iter_mut()).enumerate()
+                        {
+                            crate::ui::widgets::shelf(
+                                ui,
+                                &app.palette,
+                                ["touch-a", "touch-b", "touch-c"][index],
+                                "Shelf",
+                                |ui| {
+                                    let rect = ui.allocate_space(egui::vec2(1600.0, 100.0)).1;
+                                    *slot = rect.left();
+                                    *top = rect.top();
+                                },
+                            );
+                        }
+                        ui.allocate_space(egui::vec2(100.0, 1200.0));
+                    });
+                    page_offset = page.state.offset.y;
+                },
+            );
+            output.textures_delta.clear();
+            min_edge = min_edge.min(left[shelf]);
+            frame += 1;
+            (left, tops, page_offset)
+        };
+        run(vec![]);
+        let (initial, ys, _) = run(vec![]);
+        let y = ys[shelf] + 50.0;
+        let at = |x: f32| egui::pos2(x, y);
+        run(vec![
+            egui::Event::PointerMoved(at(from_x)),
+            press(at(from_x), true),
+            touch(egui::TouchPhase::Start, at(from_x)),
+        ]);
+        for step in 1..=4 {
+            let x = from_x + (to_x - from_x) * step as f32 / 4.0;
+            run(vec![
+                egui::Event::PointerMoved(at(x)),
+                touch(egui::TouchPhase::Move, at(x)),
+            ]);
+        }
+        run(vec![
+            press(at(to_x), false),
+            touch(egui::TouchPhase::End, at(to_x)),
+        ]);
+        for _ in 0..settle {
+            run(vec![]);
+        }
+        let (after, _, page) = run(vec![]);
+        (initial, after, page, min_edge)
+    }
+
+    /// A touch drag on the second shelf moves only that shelf.
+    #[test]
+    fn touch_drag_on_the_second_shelf_leaves_the_first_shelf_put() {
+        let (initial, after, page, _) = drag_shelf(1, 300.0, 200.0, 0);
+        assert_eq!(page, 0.0, "a level drag must not move the page");
+        assert!(
+            after[1] < initial[1] - 50.0,
+            "the dragged shelf must move left: after={} initial={}",
+            after[1],
+            initial[1]
+        );
+        assert!(
+            (after[0] - initial[0]).abs() < 0.001,
+            "the first shelf must stay put: after={} initial={}",
+            after[0],
+            initial[0]
+        );
+        assert!(
+            (after[2] - initial[2]).abs() < 0.001,
+            "the third shelf must stay put: after={} initial={}",
+            after[2],
+            initial[2]
+        );
+    }
+
+    /// A touch drag on a later shelf moves it.
+    #[test]
+    fn touch_drag_moves_a_later_shelf() {
+        let (initial, after, page, _) = drag_shelf(2, 300.0, 200.0, 0);
+        assert_eq!(page, 0.0, "a level drag must not move the page");
+        assert!(
+            after[2] < initial[2] - 50.0,
+            "the dragged shelf must move left: after={} initial={}",
+            after[2],
+            initial[2]
+        );
+        assert!(
+            (after[0] - initial[0]).abs() < 0.001,
+            "the first shelf must stay put: after={} initial={}",
+            after[0],
+            initial[0]
+        );
+    }
+
+    /// A hard fling into the far edge stops there: it must travel to the
+    /// edge (nominal -1000 plus layout margins), stop, and settle with no
+    /// excursion past the settle and no creep back.
+    #[test]
+    fn hard_fling_stops_at_the_far_edge() {
+        let (initial, after, page, min_edge) = drag_shelf(0, 550.0, 50.0, 30);
+        assert_eq!(page, 0.0, "a level fling must not move the page");
+        assert!(
+            after[0] < initial[0] - 500.0,
+            "the fling must travel to the edge: after={} initial={}",
+            after[0],
+            initial[0]
+        );
+        assert!(
+            after[0] >= -1150.0,
+            "the fling must stop at the edge: after={}",
+            after[0]
+        );
+        assert!(
+            min_edge >= after[0] - 2.0,
+            "no excursion past the settle, no creep back: min_edge={min_edge} after={}",
+            after[0]
+        );
+        assert!(
+            (after[1] - initial[1]).abs() < 0.001,
+            "the second shelf must stay put: after={} initial={}",
+            after[1],
+            initial[1]
+        );
+        assert!(
+            (after[2] - initial[2]).abs() < 0.001,
+            "the third shelf must stay put: after={} initial={}",
+            after[2],
+            initial[2]
+        );
     }
 
     #[test]

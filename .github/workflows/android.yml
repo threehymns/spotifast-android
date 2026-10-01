@@ -1,0 +1,165 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # xbuild is unpublished (crates.io still carries the unrelated 0.2.0 from
+  # 2022), so CI installs it from git at this revision.
+  XBUILD_REV: e67b501cbe0e9ca5436c223aa7ec0fe5e27544d1
+
+jobs:
+  apk:
+    name: release APK (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Android target
+        run: rustup target add aarch64-linux-android
+      # After the toolchain, so the cache key follows the pinned rustc. See
+      # ci.yml for why each job sets its own generation. Pull-request runs
+      # save as well: nothing else builds this target tree, and with
+      # main-only saves every revision recompiles cold (~30 minutes).
+      # Entries are scoped to the PR's merge ref; clear them on close if
+      # the repository's 10 GB cache fills up.
+      # Pinned past v1.5.0: save-on-pull-request is only on main so far.
+      # Move back to @v1 once a release carries it.
+      - uses: jdx/mr-boxington-action@91d7f48283e5557f0eca254d745cad55aa573b3a
+        with:
+          cache-generation: android-v1
+          save-on-pull-request: true
+      # Build scripts (ring's C compilation) need an Android C compiler;
+      # the check below does no linking, so no linker configuration. The
+      # runner image already ships the SDK's command-line tools; only the
+      # NDK itself is installed.
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          # The NDK download is large and flakes; retry it, and fail here
+          # (pipefail) instead of handing clippy a missing compiler.
+          for attempt in 1 2 3; do
+            if sdkmanager --install "ndk;27.0.12077973" 2>&1 | tail -3; then
+              break
+            fi
+            echo "sdkmanager install failed (attempt $attempt of 3)"
+            sleep 15
+          done
+          NDK="$SDK/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$NDK/aarch64-linux-android24-clang"
+          echo "$NDK" >> "$GITHUB_PATH"
+          echo "CC_aarch64_linux_android=$NDK/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          "$NDK/aarch64-linux-android24-clang" --version | head -1
+      # The fast signal: the same library xbuild compiles, before the slow
+      # release build below. MilkDrop stays off: its C++ build has no
+      # Android toolchain wiring.
+      - name: Clippy (aarch64-linux-android)
+        run: mbx clippy --locked --lib --no-default-features --target aarch64-linux-android -- -D warnings
+      # Building xbuild takes minutes; the binary is cached by revision and
+      # the install skipped on a hit. The key also covers our manifest
+      # patch (services support), applied below before installing.
+      - name: Cache xbuild
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/x
+          key: xbuild-${{ env.XBUILD_REV }}-${{ hashFiles('packaging/android/xbuild-services.patch') }}
+      - name: Install xbuild
+        run: |
+          if ! command -v x >/dev/null; then
+            rm -rf "$RUNNER_TEMP/xbuild"
+            git init -q "$RUNNER_TEMP/xbuild"
+            git -C "$RUNNER_TEMP/xbuild" remote add origin https://github.com/rust-mobile/xbuild.git
+            git -C "$RUNNER_TEMP/xbuild" fetch -q --depth 1 origin "$XBUILD_REV"
+            git -C "$RUNNER_TEMP/xbuild" checkout -q FETCH_HEAD
+            git -C "$RUNNER_TEMP/xbuild" apply "$GITHUB_WORKSPACE/packaging/android/xbuild-services.patch"
+            cargo install --path "$RUNNER_TEMP/xbuild/xbuild"
+          fi
+          x --version
+      # Without a signing key the APK carries xbuild's debug signature:
+      # installable, but not Play-uploadable. Set the ANDROID_SIGNING_PEM
+      # repository secret (a PEM-encoded RSA key and certificate) to sign
+      # release builds for distribution instead.
+      - name: Build release APK
+        run: |
+          args=(--platform android --arch arm64 --format apk --release --no-default-features)
+          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
+            echo "${{ secrets.ANDROID_SIGNING_PEM }}" > "$RUNNER_TEMP/signing.pem"
+            args+=(--pem "$RUNNER_TEMP/signing.pem")
+          fi
+          x build "${args[@]}"
+      # The debug signing identity must survive across runs, or every APK
+      # needs an uninstall first. (Release PEM builds don't use it.)
+      - name: Cache debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+      # The sign-in keepalive is Java, and xbuild is Rust-only: compile the
+      # service, add its classes.dex to the APK in place, then realign and
+      # re-sign with the same identity xbuild used (debug keystore above,
+      # or the release PEM). Debug identity differs from xbuild's own, so
+      # installs over older APKs need one uninstall first.
+      - name: Merge keepalive DEX
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
+          JAR="$(ls -d "$SDK"/platforms/android-* | sort -t- -k2 -n | tail -1)/android.jar"
+          command -v javac zip
+          KEEP="$RUNNER_TEMP/keepalive"
+          rm -rf "$KEEP" && mkdir -p "$KEEP/classes" "$KEEP/merged"
+          javac -source 8 -target 8 -nowarn -cp "$JAR" -d "$KEEP/classes" packaging/android/AuthKeepaliveService.java
+          APK=(target/x/release/android/*.apk)
+          APK_ABS="$GITHUB_WORKSPACE/${APK[0]}"
+          if unzip -l "$APK_ABS" | grep -q 'classes\.dex'; then
+            mkdir -p "$KEEP/orig" && (cd "$KEEP/orig" && unzip -o -q "$APK_ABS" classes.dex)
+            "$BT/d8" --release --min-api 26 --output "$KEEP/merged" "$KEEP/orig/classes.dex" "$KEEP/classes/rocks/spotifast/spotifast/AuthKeepaliveService.class"
+          else
+            "$BT/d8" --release --min-api 26 --output "$KEEP/merged" "$KEEP/classes/rocks/spotifast/spotifast/AuthKeepaliveService.class"
+          fi
+          (cd "$KEEP/merged" && zip -g -q "$APK_ABS" classes.dex)
+          "$BT/zipalign" -f 4 "$APK_ABS" "$KEEP/aligned.apk" && mv "$KEEP/aligned.apk" "$APK_ABS"
+          if [ -n "${{ secrets.ANDROID_SIGNING_PEM }}" ]; then
+            openssl pkcs12 -export -in "$RUNNER_TEMP/signing.pem" -out "$KEEP/signing.p12" -passout pass:spotifast -name spotifast
+            "$BT/apksigner" sign --ks "$KEEP/signing.p12" --ks-pass pass:spotifast --ks-key-alias spotifast "$APK_ABS"
+          else
+            KS=~/.android/debug.keystore
+            mkdir -p "$(dirname "$KS")"
+            [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10950 -dname "CN=Android Debug,O=Android,C=US"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android "$APK_ABS"
+          fi
+          "$BT/apksigner" verify "$APK_ABS" && echo "signature OK"
+      - name: Inspect APK
+        run: |
+          apk=(target/x/release/android/*.apk)
+          unzip -l "${apk[0]}" | tee "$RUNNER_TEMP/apk-contents.txt"
+          grep -q 'lib/arm64-v8a/libspotifast\.so' "$RUNNER_TEMP/apk-contents.txt"
+          grep -qF 'classes.dex' "$RUNNER_TEMP/apk-contents.txt"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
+          "$BT/aapt" dump xmltree "${apk[0]}" AndroidManifest.xml | grep -q 'AuthKeepaliveService'
+          # The Winamp toggle enters PiP; the flag must survive packaging.
+          "$BT/aapt" dump xmltree "${apk[0]}" AndroidManifest.xml | grep -q 'supportsPictureInPicture'
+          ls -la "${apk[0]}"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotifast-android-arm64
+          path: target/x/release/android/*.apk

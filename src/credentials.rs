@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{auth::StoredToken, paths::AppDirs};
 
+#[cfg(not(target_os = "android"))]
 const SERVICE: &str = "rocks.spotifast.Spotifast";
+#[cfg(not(target_os = "android"))]
 const LEGACY_SERVICE: &str = "rocks.fastpotify.Fastpotify";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -158,6 +160,7 @@ impl Error {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn native_error(error: keyring_core::Error) -> Error {
     // Some provider errors contain the secret or arbitrary platform data.
     // Never propagate their Debug/Display text into application diagnostics.
@@ -174,11 +177,13 @@ trait ProtectedStore: Send {
 }
 
 #[derive(Default)]
+#[cfg(not(target_os = "android"))]
 struct NativeStore {
     store: Option<Arc<keyring_core::api::CredentialStore>>,
     legacy_profile: bool,
 }
 
+#[cfg(not(target_os = "android"))]
 impl NativeStore {
     fn entry(&mut self, key: &str) -> Result<keyring_core::Entry, Error> {
         self.entry_in(
@@ -209,6 +214,7 @@ impl NativeStore {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl ProtectedStore for NativeStore {
     fn read(&mut self, key: &str) -> Result<Option<Vec<u8>>, Error> {
         match self.entry(key)?.get_secret() {
@@ -243,6 +249,74 @@ impl ProtectedStore for NativeStore {
             }
         }
         Ok(())
+    }
+}
+
+/// File-backed secret storage for Android, which has no keyring provider.
+///
+/// Secrets live as files under [`AppDirs::credentials_dir`], inside the
+/// app-private sandbox: no other app can read them, but they are plaintext
+/// on rooted devices and in backups. That matches what most apps effectively
+/// do, and it is proportionate to revocable Spotify grants; the upgrade path
+/// is an Android Keystore master key encrypting these same files.
+#[cfg(any(target_os = "android", test))]
+struct FileStore {
+    dir: PathBuf,
+}
+
+#[cfg(any(target_os = "android", test))]
+impl FileStore {
+    fn new(dirs: &AppDirs) -> Self {
+        let dir = dirs.credentials_dir();
+        Self { dir }
+    }
+
+    /// Keys are `{64 hex}:{slot}`; the colon cannot survive as a file name
+    /// on every filesystem, so anything outside `[A-Za-z0-9._-]` becomes
+    /// `_`. The mapping is injective over the keys in use.
+    fn path(&self, key: &str) -> PathBuf {
+        let safe: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.dir.join(safe)
+    }
+}
+
+#[cfg(any(target_os = "android", test))]
+impl ProtectedStore for FileStore {
+    fn read(&mut self, key: &str) -> Result<Option<Vec<u8>>, Error> {
+        match std::fs::read(self.path(key)) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(Error::Filesystem),
+        }
+    }
+
+    fn write(&mut self, key: &str, secret: &[u8]) -> Result<(), Error> {
+        std::fs::create_dir_all(&self.dir).map_err(|_| Error::Filesystem)?;
+        let path = self.path(key);
+        let temporary = path.with_extension("tmp");
+        std::fs::write(&temporary, secret).map_err(|_| Error::Filesystem)?;
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+        #[cfg(unix)]
+        let _ = std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600));
+        crate::util::replace_file(&temporary, &path).map_err(|_| Error::Filesystem)
+    }
+
+    fn delete(&mut self, key: &str) -> Result<(), Error> {
+        match std::fs::remove_file(self.path(key)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(Error::Filesystem),
+        }
     }
 }
 
@@ -283,6 +357,9 @@ pub struct Loaded {
 
 impl Store {
     pub fn new(dirs: AppDirs) -> Self {
+        #[cfg(target_os = "android")]
+        let backend = FileStore::new(&dirs);
+        #[cfg(not(target_os = "android"))]
         let backend = NativeStore {
             legacy_profile: dirs.is_legacy_profile(),
             ..Default::default()
@@ -1284,5 +1361,47 @@ mod tests {
                 Err(Error::Invalid)
             ));
         }
+    }
+
+    fn file_store_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("spotifast-filestore-{name}-{}", std::process::id()))
+    }
+
+    fn file_store_at(dir: &std::path::Path) -> FileStore {
+        let dirs = crate::paths::AppDirs {
+            config: dir.join("config"),
+            state: dir.to_path_buf(),
+            cache: dir.join("cache"),
+        };
+        FileStore::new(&dirs)
+    }
+
+    #[test]
+    fn file_store_round_trips_secrets() {
+        let dir = file_store_dir("roundtrip");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut store = file_store_at(&dir);
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:shared-web";
+        assert_eq!(store.read(key).unwrap(), None);
+        store.write(key, b"secret").unwrap();
+        assert_eq!(store.read(key).unwrap(), Some(b"secret".to_vec()));
+        store.write(key, b"rotated").unwrap();
+        assert_eq!(store.read(key).unwrap(), Some(b"rotated".to_vec()));
+        store.delete(key).unwrap();
+        assert_eq!(store.read(key).unwrap(), None);
+        store.delete(key).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_store_sanitizes_keys_into_plain_files() {
+        let dir = file_store_dir("sanitize");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut store = file_store_at(&dir);
+        let key = "ab:shared-web";
+        store.write(key, b"x").unwrap();
+        assert!(dir.join("credentials").join("ab_shared-web").exists());
+        assert_eq!(store.read(key).unwrap(), Some(b"x".to_vec()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -13,6 +13,9 @@ categories = ["multimedia::audio"]
 [lib]
 name = "spotifast"
 path = "src/lib.rs"
+# The Android build (manifest.yaml) loads the app as a cdylib out of the APK;
+# desktop binaries keep linking the rlib.
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "spotifast"
@@ -36,8 +39,7 @@ directories = "6"
 keyring-core = "1"
 # The whole UI. glow keeps the binary and the dependency tree small; wgpu is
 # not needed for a 2D music client.
-# AccessKit connects egui's control names, states, and actions to native screen readers.
-eframe = { version = "0.36", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["image", "svg"] }
 # The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
@@ -129,8 +131,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
-# Native asynchronous file selection on macOS, Windows and Linux desktop portals.
-rfd = "0.17.2"
 rand = "0.9"
 open = "5"
 percent-encoding = "2"
@@ -143,10 +143,36 @@ pbkdf2 = "0.12"
 aes = "0.8"
 ctr = "0.9"
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # The desktop's media controls on Windows and macOS, so closing the window
-# keeps the music playing there too. Linux has mpris-server below.
+# keeps the music playing there too. Linux has mpris-server below, and
+# Android a stub (src/media_android.rs) until a MediaSession bridge exists.
 souvlaki = { version = "0.8", default-features = false }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# Native asynchronous file selection on macOS, Windows and Linux desktop
+# portals. Android has no file picker wired yet; the cover dialog answers
+# at once there (src/backend.rs).
+rfd = "0.17.2"
+# AccessKit connects egui's control names, states, and actions to native
+# screen readers. eframe only supports it with android-game-activity, so
+# Android (NativeActivity, below) builds without it.
+eframe = { version = "0.36", default-features = false, features = ["accesskit"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# eframe's NativeActivity backend through winit. Features merge with the
+# desktop set above; the x11/wayland backends compile but stay unused.
+# Defaults stay off: they include accesskit, which eframe rejects without
+# android-game-activity.
+eframe = { version = "0.36", default-features = false, features = ["android-native-activity"] }
+# AndroidApp feeds the event loop and locates the app's data directories.
+# The [patch] below swaps this for the same winit fork eframe uses.
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
+# Logcat needs no crate: src/android.rs writes to it with one FFI call.
+# Reading the OAuth redirect off the launch intent and finishing the
+# redirect-catcher instance (src/auth_android.rs). Same release line
+# android-activity uses, so the JNI types agree.
+jni = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
@@ -248,7 +274,11 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "0b431145c
 # through close requests behind a feature Spotifast leaves off (winit#4692),
 # and file drag and drop on Wayland. eframe from the fork above calls the
 # Occluded API. Move both forks together with the other apps.
-winit = { git = "https://github.com/crmne/winit", rev = "fc4f39ff0993dd235952b749dd16b856c0194e1f" }
+# threehymns/winit android-pip is that fork plus Android redrawing while the
+# surface is alive instead of while resumed, so picture-in-picture keeps
+# rendering (the diff is packaging/android/winit-pip.patch). Rebase it onto
+# crmne/winit when moving.
+winit = { git = "https://github.com/threehymns/winit", rev = "61994042e8dc8e692141c3c5882711a4a867eec4" }
 # projectm-sys 1.2.2 hardcodes the Visual Studio 17 2022 CMake generator,
 # which GitHub's windows-latest images no longer carry; the fork lets an
 # explicit CMAKE_GENERATOR win. Drop when upstream takes the change.

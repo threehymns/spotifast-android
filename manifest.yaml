@@ -1,0 +1,50 @@
+# xbuild packaging for the Android APK (.github/workflows/android.yml).
+# Everything unset here falls back to xbuild's defaults: version 0.11.0 from
+# Cargo.toml, SDK target/compile 33 with min 26 below, a NativeActivity
+# launcher pointing at this library, and non-debuggable release builds.
+
+android:
+  # Launcher icon, scaled to every density. The macOS .icns source without
+  # platform rounding.
+  icon: packaging/macos/icon-1024.png
+  manifest:
+    package: rocks.spotifast.Spotifast
+    # cpal plays through AAudio, which arrived in API 26; xbuild also
+    # resolves the NDK platform stubs from this, and android-21 ships no
+    # libaaudio.so.
+    sdk:
+      min_sdk_version: 26
+    uses_permission:
+      - {name: android.permission.INTERNET}
+      - {name: android.permission.ACCESS_NETWORK_STATE}
+      - {name: android.permission.FOREGROUND_SERVICE}
+    application:
+      label: Spotifast
+      # The APK carries DEX now (the sign-in keepalive service below), so
+      # say so explicitly rather than relying on the default.
+      has_code: true
+      # One activity: xbuild fills in NativeActivity, singleTop, and the
+      # MAIN/LAUNCHER filter. The VIEW filter below catches the OAuth
+      # custom-scheme redirect as a second instance while the first is
+      # frozen under the browser (src/auth_android.rs).
+      activities:
+        # Picture-in-picture for the Winamp mini player (src/pip_android.rs).
+        # The flag below comes from the xbuild patch; xbuild's default
+        # configChanges already covers the PiP set, so entering never
+        # restarts the activity.
+        - supports_picture_in_picture: true
+          intent_filters:
+            - actions: [android.intent.action.VIEW]
+              categories:
+                - android.intent.category.DEFAULT
+                - android.intent.category.BROWSABLE
+              data:
+                - scheme: rocks.spotifast.spotifast
+                  host: callback
+      services:
+        # The sign-in keepalive (packaging/android/AuthKeepaliveService.java): a
+        # foreground service that holds the process unfrozen while the
+        # browser is in front. Needs the xbuild services patch
+        # (packaging/android/xbuild-services.patch, applied in CI).
+        - name: rocks.spotifast.spotifast.AuthKeepaliveService
+          exported: false

@@ -137,8 +137,18 @@ impl PixelText {
                 (Some(first), Some(last)) => (*first, last - first + 1),
                 _ => (0, height as u32),
             };
-            let texture =
-                ctx.load_texture(format!("pledit:{text}"), image, TextureOptions::NEAREST);
+            // As in `WinampState::textures`: crisp NEAREST upscaling,
+            // smooth LINEAR downscaling; desktop stays full NEAREST.
+            let options = if cfg!(target_os = "android") {
+                TextureOptions {
+                    magnification: egui::TextureFilter::Nearest,
+                    minification: egui::TextureFilter::Linear,
+                    ..TextureOptions::LINEAR
+                }
+            } else {
+                TextureOptions::NEAREST
+            };
+            let texture = ctx.load_texture(format!("pledit:{text}"), image, options);
             self.lines.insert(
                 text.to_string(),
                 Line {

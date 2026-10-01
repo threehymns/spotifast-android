@@ -1,0 +1,34 @@
+diff --git a/apk/src/manifest.rs b/apk/src/manifest.rs
+--- a/apk/src/manifest.rs
++++ b/apk/src/manifest.rs
+@@ -82,6 +82,21 @@ pub struct Application {
+     #[serde(rename(serialize = "activity"))]
+     #[serde(default)]
+     pub activities: Vec<Activity>,
++    #[serde(rename(serialize = "service"))]
++    #[serde(default)]
++    pub services: Vec<Service>,
++}
++
++/// Android [service element](https://developer.android.com/guide/topics/manifest/service-element).
++#[derive(Clone, Debug, Default, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct Service {
++    #[serde(rename(serialize = "android:name"))]
++    pub name: String,
++    #[serde(rename(serialize = "android:exported"))]
++    pub exported: Option<bool>,
++    #[serde(rename(serialize = "android:foregroundServiceType"))]
++    pub foreground_service_type: Option<String>,
+ }
+ 
+ /// Android [activity element](https://developer.android.com/guide/topics/manifest/activity-element).
+@@ -113,6 +113,8 @@ pub struct Activity {
+     pub intent_filters: Vec<IntentFilter>,
+     #[serde(rename(serialize = "android:colorMode"))]
+     pub color_mode: Option<String>,
++    #[serde(rename(serialize = "android:supportsPictureInPicture"))]
++    pub supports_picture_in_picture: Option<bool>,
+ }
+ 
+ /// Android [intent filter element](https://developer.android.com/guide/topics/manifest/intent-filter-element).

@@ -21,6 +21,8 @@ jobs:
   quality:
     name: quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -50,9 +52,21 @@ jobs:
       - name: Release name migration regressions
         run: python3 packaging/test-release-names.py
       - name: Clippy (default features)
-        run: mbx clippy --locked --all-targets -- -D warnings
+        run: mbx clippy --locked --all-targets -- -D warnings 2>&1 | tee clippy-default.log; exit ${PIPESTATUS[0]}
       - name: Clippy (all features)
-        run: mbx clippy --locked --all-targets --all-features -- -D warnings
+        run: mbx clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee clippy-all.log; exit ${PIPESTATUS[0]}
+      # Clippy excerpts as a commit comment, like the test job's reporter:
+      # the lint name and context land on the commit instead of hiding in
+      # the step log.
+      - name: Report clippy failures to the commit
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_OS: ${{ runner.os }}
+          REPORT_REPO: ${{ github.repository }}
+          REPORT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/workflows/report-failures.sh "Clippy failures" clippy-failures.md clippy-default.log clippy-all.log
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -61,6 +75,8 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     env:
       CMAKE_GENERATOR: Ninja
     # A cold mbx cache on Windows (projectM through cmake) needs about 30
@@ -97,10 +113,35 @@ jobs:
           cache-generation: test-v1
       # The demo feature carries the headless render test that lays out every
       # page, panel, and dialog without a display.
+      # Windows runs these under pwsh: git-bash prepends its /usr/bin to
+      # PATH, where its own link.exe shadows MSVC's and every Rust link
+      # fails. pwsh's Tee-Object captures the log there instead.
       - name: Tests (default features)
-        run: mbx test --locked --all-targets
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mbx test --locked --all-targets 2>&1 | tee test-default.log; exit ${PIPESTATUS[0]}
+      - name: Tests (default features)
+        if: runner.os == 'Windows'
+        run: mbx test --locked --all-targets 2>&1 | Tee-Object -FilePath test-default.log; exit $LASTEXITCODE
       - name: Tests (all features)
-        run: mbx test --locked --all-targets --all-features
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mbx test --locked --all-targets --all-features 2>&1 | tee test-all.log; exit ${PIPESTATUS[0]}
+      - name: Tests (all features)
+        if: runner.os == 'Windows'
+        run: mbx test --locked --all-targets --all-features 2>&1 | Tee-Object -FilePath test-all.log; exit $LASTEXITCODE
+      # Failure excerpts as a commit comment: CI log downloads are unreachable
+      # from some sandboxes, but the API is not, so automation (and humans)
+      # read failures here instead of digging through logs.
+      - name: Report failing tests to the commit
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_OS: ${{ runner.os }}
+          REPORT_REPO: ${{ github.repository }}
+          REPORT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/workflows/report-failures.sh "Failing tests" failing-tests.md test-default.log test-all.log
       - name: Native credential store (dummy grants)
         if: runner.os == 'Windows' || runner.os == 'macOS'
         timeout-minutes: 2
