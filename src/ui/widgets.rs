@@ -2457,6 +2457,15 @@ pub fn shelf(
     // Wheel and scrollbar changes flow through the output back into next
     // frame's forced offset, so they keep working unchanged.
     touch.offset = output.state.offset.x;
+    // The area clamps after laying out, so without this the content
+    // renders one fling-step past the edge every frame and strobes back
+    // as the velocity decays. Clamp the forced value itself and stop dead.
+    let unbounded = touch.offset;
+    let max = (output.content_size.x - output.inner_rect.width()).max(0.0);
+    touch.offset = touch.offset.clamp(0.0, max);
+    if touch.offset != unbounded {
+        touch.vel = 0.0;
+    }
     // The reported inner rect keeps its pre-shrink height: for a horizontal
     // shelf it reaches the page bottom, so every shelf above the finger
     // would count as dragged too. Clamp the hitbox to the measured content.
