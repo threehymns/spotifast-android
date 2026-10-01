@@ -61,6 +61,8 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     env:
       CMAKE_GENERATOR: Ninja
     # A cold mbx cache on Windows (projectM through cmake) needs about 30
@@ -98,9 +100,47 @@ jobs:
       # The demo feature carries the headless render test that lays out every
       # page, panel, and dialog without a display.
       - name: Tests (default features)
-        run: mbx test --locked --all-targets
+        shell: bash
+        run: mbx test --locked --all-targets 2>&1 | tee test-default.log; exit ${PIPESTATUS[0]}
       - name: Tests (all features)
-        run: mbx test --locked --all-targets --all-features
+        shell: bash
+        run: mbx test --locked --all-targets --all-features 2>&1 | tee test-all.log; exit ${PIPESTATUS[0]}
+      # Failure excerpts as a commit comment: CI log downloads are unreachable
+      # from some sandboxes, but the API is not, so automation (and humans)
+      # read failures here instead of digging through logs.
+      - name: Report failing tests to the commit
+        if: failure() && runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - test-default.log test-all.log > failing-tests.md <<'EOF'
+          import re, sys
+          chunks = []
+          for path in sys.argv[1:]:
+              try:
+                  text = open(path, errors='replace').read()
+              except OSError:
+                  continue
+              if 'test result: FAILED' not in text and '\nerror' not in text:
+                  continue
+              m = re.search(r'^failures:\n((?:    .+\n)+)', text, re.M)
+              names = [l.strip() for l in m.group(1).splitlines() if l.strip()] if m else []
+              secs = []
+              for name in names[:10]:
+                  mm = re.search(r'^---- ' + re.escape(name) + r' stdout ----\n(.*?)(?=^---- |\nfailures:|\ntest result:)',
+                                 text, re.M | re.S)
+                  if mm:
+                      secs.append(f'### {name}\n```\n{mm.group(1)[:12000]}\n```')
+              if secs:
+                  chunks.append(f'## {path}\n' + '\n'.join(secs))
+              else:
+                  tail = '\n'.join(text.splitlines()[-80:])
+                  chunks.append(f'## {path} (no per-test sections)\n```\n{tail[-12000:]}\n```')
+          body = '\n\n'.join(chunks) if chunks else 'Tests failed but no failure sections were captured.'
+          sys.stdout.write(f'## Failing tests\n{body}'[:60000])
+          EOF
+          test -s failing-tests.md || echo 'Tests failed but no failure sections were captured.' > failing-tests.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body=@failing-tests.md
       - name: Native credential store (dummy grants)
         if: runner.os == 'Windows' || runner.os == 'macOS'
         timeout-minutes: 2
