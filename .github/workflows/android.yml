@@ -155,6 +155,8 @@ jobs:
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
           "$BT/aapt" dump xmltree "${apk[0]}" AndroidManifest.xml | grep -q 'AuthKeepaliveService'
+          # The Winamp toggle enters PiP; the flag must survive packaging.
+          "$BT/aapt" dump xmltree "${apk[0]}" AndroidManifest.xml | grep -q 'supportsPictureInPicture'
           ls -la "${apk[0]}"
       - name: Upload APK
         uses: actions/upload-artifact@v4
