@@ -2373,6 +2373,8 @@ pub fn card(
 struct ShelfTouch {
     /// Horizontal offset to force this frame.
     offset: f32,
+    /// Max offset last frame, for the pre-force clamp.
+    max_offset: f32,
     /// Fling velocity in points per second, while nothing touches the screen.
     vel: f32,
     /// The shelf's inner rect last frame: the drag hitbox.
@@ -2437,6 +2439,14 @@ pub fn shelf(
             touch.vel = 0.0;
         }
     }
+    // Clamp the intent before forcing: the area's own clamp would mask a
+    // past-edge excursion from the feedback clamp below, leaving the fling
+    // velocity alive forever. Last frame's max is close enough for this.
+    let unbounded = touch.offset;
+    touch.offset = touch.offset.clamp(0.0, touch.max_offset);
+    if touch.offset != unbounded {
+        touch.vel = 0.0;
+    }
     let area = egui::ScrollArea::horizontal().id_salt(id).scroll_source(ScrollSource {
         drag: DragScroll::Never,
         ..Default::default()
@@ -2458,6 +2468,7 @@ pub fn shelf(
     // frame's forced offset, so they keep working unchanged.
     let reported = output.state.offset.x;
     let max = (output.content_size.x - output.inner_rect.width()).max(0.0);
+    touch.max_offset = max;
     // At rest against the far edge, hold it: the reported offset carries
     // pixel-quantized clamp noise (within ~1pt) that would otherwise
     // ratchet the edge backward frame after frame. Anything farther out
